@@ -5,7 +5,7 @@
 Local dictation, meeting recording and structured notes from your terminal.
 Built with TypeScript for macOS on Apple Silicon. No Python runtime or cloud API.
 
-- **Dictate from any app.** Press Ctrl+Option+Space, speak, then press it again. Paste the formatted text with Cmd+V.
+- **Dictate from any app.** Press Ctrl+Option+Space, speak, then press it again. Text is inserted into the focused input, or copied for Cmd+V.
 - **Record meetings.** Capture microphone and system audio separately, with device switching, pause and mute controls.
 - **Choose what to keep.** Name each meeting and explicitly choose whether to keep a transcript, generate a note or delete the text.
 - **Read and export.** Render Markdown in the terminal, open a local browser view, and export Markdown or HTML.
@@ -24,24 +24,42 @@ Clone or download this repository, open its directory, then run:
 
 ```sh
 ./install.sh
-./sylloom
+sylloom
 ```
 
 The installer checks your Mac, installs Node.js if needed, installs `whisper-server`
 and `llama-server`, runs `npm ci`, builds the CLI, and downloads all four models.
 Downloads are checked against the model publisher’s size and SHA-256. Transfers
 use bounded byte ranges with retries; interrupted downloads are not installed.
-It creates a `sylloom` symlink in `~/.local/bin`. If that directory is on your PATH,
-you can start Sylloom from anywhere with `sylloom`. Existing commands and saved
-model selections are preserved. Keep the installed source directory in place.
+It installs a `sylloom` launcher in `~/.local/bin` and adds that directory to your
+shell PATH if needed (zsh, bash or fish). Open a new terminal after first-time PATH
+setup. Then run `sylloom` from any directory. No `sudo` or global npm install is
+needed. Unrelated commands and saved model selections are preserved. Keep the
+installed source directory in place; the launcher starts that build and uses its
+existing local data. It can also locate the installed Node runtime when Node is
+missing from your shell PATH.
 
 ```sh
 ./install.sh --check           # Check requirements without changes
 ./install.sh --dictation-only  # Download just Turbo and the formatter
 ./install.sh --skip-models     # Build without downloading models
 ./install.sh --no-link         # Use ./sylloom without creating a command
+./install.sh --no-path         # Install the command without editing shell startup files
 ./install.sh --help
 ```
+
+For an already built checkout, register or repair the global command without
+reinstalling dependencies or downloading models:
+
+```sh
+./sylloom install
+sylloom --version
+sylloom stats
+```
+
+Repeating `sylloom install` updates Sylloom's own launcher and avoids duplicate
+PATH entries. `--bin-dir DIRECTORY` chooses another command directory;
+`--no-path` leaves shell configuration unchanged. zsh uses `ZDOTDIR` when set.
 
 For a manual install with an existing Node.js 22.18+ installation:
 
@@ -63,19 +81,22 @@ Keep the CLI running, even when another app is in the foreground.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+Option+Space | Start recording; press again to stop, transcribe and copy |
+| Ctrl+Option+Space | Start recording; press again to stop, transcribe and insert or copy |
 | Ctrl+Option+Esc | Cancel the current dictation |
-| Cmd+V | Paste the copied text yourself |
+| Cmd+V | Paste when insertion falls back to the clipboard |
 
-A small, transparent waveform appears while dictation is active. It follows the
-actual microphone level, turns gray during processing, and briefly green after
-copying. It takes neither keyboard focus nor mouse clicks. The indicator contains
-no labels or buttons and respects the system’s Reduce Motion preference.
+A compact waveform bubble appears at the bottom center of your display while
+dictation is active. It opens from a droplet and contracts back down when finished,
+matching the call popup animation. The waveform follows the actual microphone
+level, turns gray during processing and briefly green after delivery. The bubble
+contains no labels, buttons or timer, takes no keyboard focus and passes clicks
+through. Reduce Motion replaces the liquid transition with a short fade.
 
 ```sh
 ./sylloom dictate
 ./sylloom dictate --listen                # Global shortcuts without the terminal UI
 ./sylloom dictate --listen --format email
+./sylloom preview-indicator               # Simulated waveform; no microphone capture
 ```
 
 Choose **Message**, **Email** or **List** in Settings. Dictation keeps the language
@@ -86,12 +107,133 @@ The bundled formatter is intended for German and English.
 
 Say “new paragraph”, “neuer Absatz” or “Absatzwechsel” for a paragraph break.
 Dictation history retains the original transcript, formatted text and audio.
-You can read, reformat, copy or explicitly delete each dictation. Canceling a new
-dictation removes it; canceling a reformat preserves the saved version. Empty or
-failed results are not copied. Sylloom never inserts or sends text automatically.
-Closing the CLI stops capture and unregisters the global shortcuts.
+Every dictation is kept, including canceled, failed and interrupted recordings.
+Read, rename, pin, reformat, copy or explicitly delete it from the Library.
+Canceling a reformat preserves its previous saved version. Closing the CLI stops
+capture, retains interrupted audio and unregisters the shortcuts.
 
-### Dictation latency
+Automatic insertion is enabled by default. Allow **Accessibility** access for your
+terminal under **System Settings → Privacy & Security → Accessibility**. Sylloom
+captures the editable field and selection when you stop recording. Before inserting,
+it checks that focus, selection and existing text have not changed. Web inputs use a
+normal paste so Safari and other web editors receive their input events. Delivery
+is confirmed against the field contents. Successful pasting restores the previous
+clipboard, including its other formats, unless you copied something new meanwhile.
+Unsupported inputs, password fields, missing permissions
+or a changed focus fall back to the clipboard. Settings can disable insertion.
+Sylloom never presses Enter or sends a message. History retries only copy.
+
+If formatting fails after transcription, the original transcript is copied for
+recovery. If no speech was recognized, the clipboard stays unchanged; the audio
+remains available for retry. App support depends on its macOS Accessibility
+implementation. This does not promise insertion into every editor or terminal.
+
+## Library and Insights
+
+**Library** searches names, structured notes, formatted dictations and original
+transcripts together. Type to search; use **Tab** for All, Meetings, Dictations and
+Needs attention, **Ctrl+P** for pinned items and **Ctrl+S** to change sorting.
+New and completed dictations appear while the Library is open. **Ctrl+R** refreshes
+it manually; search, filters and the selected item survive background updates.
+Search ignores accents and requires all entered words. Titles rank above body
+matches; pinned items stay at the top. Rename or pin from an item's menu.
+Unreadable items are reported without preventing access to the rest of the Library.
+Interrupted dictations with damaged audio stay visible under Needs attention with
+their original files preserved. A corrupt activity ledger reports an error without
+terminating the CLI or replacing the ledger.
+
+**Settings** is grouped into Dictation, Global shortcuts, Recording and audio,
+Outlook meeting reminders, Call recording prompts, Models and performance, Permissions,
+and Storage and recovery. Boolean switches show **On / Off**. Use Enter or Space
+to change them, **Save changes** to apply, or Esc to discard the draft. Call
+detection and app switches apply immediately.
+
+**Outlook meeting reminders** reads an explicitly connected local source and
+shows a compact popup before a Teams meeting, five minutes ahead by default.
+Change the lead time from 1–60 minutes or switch reminders Off in Settings.
+There is no calendar screen or browser workspace. A reminder never records audio;
+Open Teams is available only for a recognized Teams link and requires a click.
+
+Connect through **Settings → Outlook meeting reminders → Connect local Outlook**.
+Source status reports partial or unavailable coverage. New Outlook can expose an
+empty legacy scripting profile even while its current account has appointments.
+When this is detected, Sylloom reports the connection as unavailable instead of
+treating an empty result as a working calendar. Its newer proprietary local store
+is currently unsupported. An existing macOS calendar or local ICS file is an
+optional fallback. No add-in, extension, Graph connection or new login is needed.
+
+**Call recording prompts** offers **Record / Dismiss** in a compact bottom-center
+popup for FaceTime/iPhone calls reaching this Mac, native WhatsApp and Teams.
+Each app has its own On / Off switch. Sylloom observes call controls and Core Audio
+stream activity, with the local Teams device API as an additional source. This
+observation reads activity flags, not audio samples. Audio activity can detect an
+answered call; detecting the ringing stage depends on the app's exposed controls.
+An audio-only signal is labeled **Audio session detected**, since other duplex
+audio sessions are possible. Native WhatsApp and Teams still need live verification.
+An iPhone call relayed to the Mac has passed a post-answer popup/active/hangup
+test. The popup did not appear during ringing in that test. An additional Apple
+notification-button adapter is now included for that stage, but has not yet been
+verified with a real incoming call. It requires Accessibility permission.
+
+Popups emerge from the bottom center as a small droplet, stretch into a liquid
+shape and open into the card with an elastic settle. Dismissal reverses the
+motion, gathering the card back into a droplet. Text and buttons appear after the
+shape opens, keeping their original layout. macOS Reduce Motion uses a short fade instead. Run
+`sylloom preview-popups` to preview call, reminder and saved-recording popups
+without recording audio. Close preview or Ctrl+C ends the preview.
+
+Only clicking **Record** starts audio capture. Recording stops after a confirmed
+hangup belonging to that same call; an unavailable detector keeps it running.
+Switch auto-stop Off under Recording and audio. Teams' local device API may need
+enabling in its Privacy settings, or an administrator may disable it. A token is
+stored only in macOS Keychain. Naming and the transcript decision always remain
+in the CLI. Details: [local bridge](DESIGN.md#local-outlook-reminders-and-call-bridge).
+
+**Ctrl+Option+C** copies the latest saved dictation from any app. Library has
+date/state filters under **Ctrl+F**, separate reformat/retranscribe actions and
+recognition/formatting/total timings. Failed retries preserve the previous result.
+**Storage and recovery** shows local usage and pending items; `sylloom recovery`
+prints the same overview. `sylloom bridge` probes the configured local sources.
+Recovery includes direct Finder access to the data folder and unreadable recording
+folders. Library shows indexing details with **Ctrl+E**, keeping healthy results searchable.
+If an interrupted meeting has a damaged audio track, recovery records the error
+and preserves the original file while recovering its healthy tracks. The CLI can
+still open; naming and the transcript decision remain pending.
+Unreadable meeting metadata is listed with its preserved path. Dictation and
+settings remain available; new meetings and reprocessing wait for metadata repair
+so an unresolved transcript decision cannot be bypassed. Restore `session.json`
+from a backup using **Storage and recovery** to inspect the affected folder.
+Invalid transcription checkpoints move to `chunks/rejected/` and are rebuilt from
+saved audio on retry. Original checkpoint bytes and audio stay preserved.
+The controller uses a kernel lock that releases on exit or a crash; an old
+shutdown callback cannot unlock a new controller.
+
+**Insights** shows total spoken words, dictation count, weighted WPM, current and
+longest streak, today's activity and a GitHub-style daily grid. Local calendar
+days run Monday to Sunday. A streak stays active through yesterday until you dictate
+today. Counts use original transcript words once per dictation, including recovered
+speech. Retries do not add another dictation. Canceling without a transcript adds no
+words. WPM uses recording time including pauses, not an estimate of active speech.
+Meeting counts and notes are shown separately. Activity counts survive explicit
+history deletion; the local ledger contains IDs, timestamps, durations and counts,
+without transcript text. Existing history is backfilled on opening Insights.
+
+Press **O** in Insights for a self-contained local dashboard with day details,
+period filters and a downloadable PNG share card. **S** previews aggregate text
+before opening an X composer. The browser version lets you edit that draft first.
+Attach the downloaded card yourself. Nothing is posted automatically, and no
+transcript, note title or app context is included. Browser views are snapshots;
+reopen them from the CLI to refresh.
+
+```sh
+./sylloom library 'release import'
+./sylloom library --type dictation --pinned --json
+./sylloom stats
+./sylloom stats --json
+./sylloom stats --open
+```
+
+## Dictation latency
 
 Whisper and the formatter preload when recording starts. Transcription still
 begins only after stopping. Models stay warm for 120 seconds after copying, then
@@ -192,6 +334,11 @@ created yourself. Reprocessing requires a new finish decision.
 
 ## Models and local data
 
+**Local models** groups setup by purpose: Dictation, Dictation formatting, Meeting
+transcription and Meeting notes. Each row shows its status and selected model.
+Open a row to install or select the recommended model, choose a custom file, or
+configure the note backend. File paths stay in the custom-file dialog.
+
 | Role | Default model | Approximate download |
 | --- | --- | --- |
 | Meeting transcription | [Whisper large-v3, FP16](https://huggingface.co/ggerganov/whisper.cpp) | 2.9 GiB |
@@ -211,6 +358,7 @@ Everything is stored under the local, git-ignored `data/` directory by default:
 ```text
 data/
   settings.json
+  usage.json
   models/
   recordings/<id>/
     session.json

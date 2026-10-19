@@ -73,9 +73,11 @@ export class Recorder extends EventEmitter {
     }
 
     async start(): Promise<void> {
+        if (this.stopping) return;
         try {
             // Discovery cannot ask for microphone permission; opening a stream can.
             try { this.inventory = await this.audio.devices(); } catch { this.inventory = []; }
+            if (this.stopping) return;
             for (const source of this.sources) {
                 const file = path.join(this.directory, source + '.wav');
                 this.writers.set(source, new WavWriter(file));
@@ -83,6 +85,7 @@ export class Recorder extends EventEmitter {
                 const selected = this.inventory.length ? resolveDevice(this.inventory, source, requested)?.id : requested;
                 if (!selected) throw new Error("No audio device available for " + source + '.');
                 await this.audio.request('start', source, selected);
+                if (this.stopping) return;
                 this.current[source] = selected;
                 if (requested !== 'default' && selected !== requested) this.event(source + ': Fallback auf ' + selected + "; preferred device missing.");
             }

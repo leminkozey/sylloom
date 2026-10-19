@@ -26,7 +26,7 @@ export async function startControl(recorder: Recorder): Promise<() => Promise<vo
             void (async () => {
                 try {
                     const { command, value } = JSON.parse(input.split('\n')[0]!);
-                    if (command === 'stop') { recorder.emit('stopRequested'); await recorder.stop(); }
+                    if (command === 'stop') await recorder.stop();
                     else if (command === 'pause') await recorder.pause(true);
                     else if (command === 'resume') await recorder.pause(false);
                     else if (command === 'input' || command === 'output') {
@@ -36,7 +36,11 @@ export async function startControl(recorder: Recorder): Promise<() => Promise<vo
                     else if (command === 'mute-system') await recorder.toggleMute('system');
                     else if (!['status', 'pause', 'resume'].includes(command)) throw new Error("Unknown control command.");
                     socket.end(JSON.stringify({ ok: true, id: recorder.session.id, state: recorder.session.state,
-                        input: recorder.current.mic, output: recorder.current.system, muted: recorder.muted, health: recorder.health }) + '\n');
+                        input: recorder.current.mic, output: recorder.current.system, muted: recorder.muted, health: recorder.health }) + '\n', () => {
+                        // The controller may close this socket as soon as it receives
+                        // stopRequested. Flush the acknowledgement before cleanup.
+                        if (command === 'stop') recorder.emit('stopRequested');
+                    });
                 } catch (error) { socket.end(JSON.stringify({ ok: false, error: errorMessage(error) }) + '\n'); }
             })();
         });

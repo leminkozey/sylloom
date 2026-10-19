@@ -7,25 +7,42 @@ import path from 'node:path';
 import { Audio } from './audio.js';
 import { Recorder } from './recorder.js';
 import { control, startControl } from './control.js';
-import { acquireLock, home, loadSession, nameSession, saveSettings, sessionDirectory, sessions, settings } from './store.js';
+import { acquireLock, home, loadSession, nameSession, saveSettings, scanSessions, sessionDirectory, sessions, settings } from './store.js';
 import { finishSession, recoverSessions, reopenSession } from './workflow.js';
 import { documentPath, exportDocument, openDocument } from './documents.js';
 import type { DocumentKind, ExportFormat } from './documents.js';
 import { renderMarkdown } from './terminal/markdown.js';
 import { mainMenu, finishFlow, recordFlow, settingsMenu } from './app.js';
 import { createInterface, dictationMenu } from './dictation-ui.js';
-import { DictationService } from './dictation.js';
+import { DictationService, recoverDictations } from './dictation.js';
 import { DICTATION_SHORTCUT } from './hotkey.js';
 import { dictationConfig } from './dictation-models.js';
 import { installModel, models } from './models.js';
 import { errorMessage } from './types.js';
 import type { Decision, Settings } from './types.js';
 import { installSignalHandlers, onShutdown } from './lifecycle.js';
+import { loadLibrary, searchLibrary, librarySnippet } from './library.js';
+import { loadInsights } from './insights.js';
+import { renderInsights, saveInsightsView, openExternal } from './insights-ui.js';
+import { accessibilityStatus } from './insertion.js';
+import { installCommand } from './installation.js';
+import { version } from './brand.js';
+import { MeetingBridge } from './meeting-bridge.js';
+import { readLocalCalendar, calendarRange } from './calendar.js';
+import { storageOverview } from './storage.js';
+import { CallDetector, enabledCallApps } from './calls.js';
+import { previewPopups } from './popup-preview.js';
+import { previewIndicator } from './indicator-preview.js';
 
 async function locked(work: () => Promise<void>): Promise<void> {
     const release = await acquireLock();
     const unregister = onShutdown(release);
-    try { await recoverSessions(); await work(); }
+    try {
+        await recoverSessions(); await recoverDictations();
+        const { issues } = await scanSessions();
+        if (issues.length) process.stderr.write(issues.length + ' recording(s) need metadata repair. Run "sylloom recovery" for preserved files. Dictation remains available.\n');
+        await work();
+    }
     finally { unregister(); await release(); }
 }
 
@@ -56,8 +73,19 @@ async function headless(config: Settings, duration?: number): Promise<void> {
     process.stdout.write("Audio saved: " + sessionDirectory(session.id) + "\nName this recording and choose what to keep: sylloom finish " + session.id + '\n');
 }
 
-const program = new Command().name('sylloom').description("Local dictation, audio recording and structured meeting notes.").version('0.1.0');
+const program = new Command().name('sylloom').description("Local dictation, audio recording and structured meeting notes.").version(version);
 program.action(() => locked(async () => mainMenu(await settings())));
+
+program.command('install').description('Install the global sylloom command for this user')
+    .option('--bin-dir <directory>', 'Command directory; defaults to ~/.local/bin')
+    .option('--no-path', 'Leave shell configuration unchanged')
+    .action(async options => {
+        const result = await installCommand({ binDirectory: options.binDir, configurePath: options.path });
+        process.stdout.write('Command installed: ' + result.command + '\n');
+        if (result.shellFiles.length) process.stdout.write('PATH configured in: ' + result.shellFiles.join(', ') + '\n');
+        process.stdout.write(result.onPath ? 'Ready. Run sylloom from any directory.\n' :
+            options.path ? 'Open a new terminal, then run sylloom from any directory.\n' : 'Add the command directory to PATH, then run sylloom.\n');
+    });
 
 program.command('record').description("Record audio; process after stopping").option('--headless', "Record without the interactive UI").option('--duration <seconds>', "Stop after this many seconds")
     .addOption(new Option('--no-live', "Compatibility: processing always starts after recording").hideHelp())
@@ -76,7 +104,7 @@ program.command('record').description("Record audio; process after stopping").op
         }
     }));
 
-program.command('dictate').description("Dictate from any app, format locally and copy to clipboard")
+program.command('dictate').description("Dictate from any app, format locally and insert or copy")
     .option('--listen', "Listen for global shortcuts without the TUI; runs until Ctrl+C")
     .addOption(new Option('--format <format>', "Format for new dictations").choices(['message', 'email', 'list']))
     .action(options => locked(async () => {
@@ -87,7 +115,9 @@ program.command('dictate').description("Dictate from any app, format locally and
             try { await dictationMenu(ui.screen, ui.service); } finally { await ui.close(); }
             return;
         }
-        const service = new DictationService(config);
+        let bridge: MeetingBridge;
+        const service = new DictationService(config, () => Boolean(bridge?.recording || bridge?.working));
+        bridge = new MeetingBridge(config, service);
         let timer: NodeJS.Timeout | undefined;
         let stop!: () => void;
         const stopped = new Promise<void>(resolve => { stop = resolve; });
@@ -95,15 +125,44 @@ program.command('dictate').description("Dictate from any app, format locally and
         try {
             service.listen();
             if (service.hotkeyError) throw new Error(service.hotkeyError);
+            await bridge.start();
             service.on('update', () => process.stderr.write(service.message + '\n'));
             process.stderr.write("Global shortcuts ready: " + DICTATION_SHORTCUT + " Start/stop · Ctrl+Option+Esc Cancel · Ctrl+C Quit\n");
             timer = setInterval(() => {}, 1000);
             await stopped;
         } finally {
             clearInterval(timer); process.off('SIGINT', stop); process.off('SIGTERM', stop);
-            await service.close();
+            try { await bridge.close(); } finally { await service.close(); }
         }
     }));
+
+program.command('recovery').description('Show local storage, pending captures and model readiness')
+    .action(async () => { process.stdout.write((await storageOverview(await settings())).join('\n') + '\n'); });
+
+program.command('preview-popups').description('Preview native popup animations without recording audio')
+    .action(async () => {
+        process.stdout.write('Popup preview: call, reminder and saved recording. No audio is recorded. Ctrl+C closes the preview.\n');
+        await previewPopups();
+    });
+
+program.command('preview-indicator').description('Preview the dictation bubble with simulated microphone levels')
+    .action(async () => {
+        process.stdout.write('Dictation bubble preview with simulated levels. No microphone or audio capture. Ctrl+C closes the preview.\n');
+        await previewIndicator();
+    });
+
+program.command('bridge').description('Probe local call and Outlook connections without recording')
+    .action(async () => {
+        const config = await settings();
+        const detector = new CallDetector(config.teamsPort);
+        detector.enabledApps = enabledCallApps(config); detector.readOutlook = config.calendarOutlook;
+        try {
+            if (config.bridgeEnabled) { detector.start(); await new Promise(resolve => setTimeout(resolve, 3500)); }
+            else detector.setState('unknown', 'none', 'Call recording prompts are disabled.');
+            const range = calendarRange(); const calendar = await readLocalCalendar(config, range.from, range.to);
+            process.stdout.write(JSON.stringify({ call: detector.snapshot, visibleOutlookEvent: Boolean(detector.visibleEvent), events: calendar.events.length, sources: calendar.statuses }, null, 2) + '\n');
+        } finally { await detector.close(); }
+    });
 
 program.command('control <command> [value]').description("Control recording: status, pause, resume, stop, input, output, mute-mic, mute-system")
     .action(async (command, value) => { process.stdout.write(JSON.stringify(await control(command, value), null, 2) + '\n'); });
@@ -121,10 +180,40 @@ program.command('devices').description("List microphones and system audio output
 });
 
 program.command('list').description("List recordings and pending decisions").option('--json', "Output JSON").action(async options => {
-    const all = await sessions();
+    const { sessions: all, issues } = await scanSessions();
+    for (const issue of issues) process.stderr.write(issue.id + ': ' + issue.message + ' Run "sylloom recovery".\n');
     if (options.json) process.stdout.write(JSON.stringify(all, null, 2) + '\n');
     else for (const session of all) process.stdout.write(session.id + '  ' + (session.state === 'done' ? "DONE" : "OPEN") + '  ' + (session.name || "Untitled") + '  ' + session.startedAt + '\n');
 });
+
+program.command('library [query]').description('Search saved notes, recordings and dictations')
+    .addOption(new Option('--type <type>', 'Filter by kind').choices(['meeting', 'dictation']))
+    .option('--pinned', 'Only pinned items').option('--json', 'Output JSON')
+    .action(async (query, options) => {
+        const library = await loadLibrary();
+        const items = searchLibrary(library.items, query, { kind: options.type, pinned: options.pinned });
+        const results = items.map(item => {
+            const { id, kind, title, date, status, pinned, words, seconds, data } = item;
+            return { id, kind, title, date, status, pinned, words, seconds, snippet: librarySnippet(item, query),
+                delivery: kind === 'dictation' ? (data as import('./dictation.js').Dictation).delivery : undefined };
+        });
+        if (options.json) process.stdout.write(JSON.stringify({ items: results, warnings: library.warnings }, null, 2) + '\n');
+        else {
+            for (const item of results) process.stdout.write(`${item.id}  ${item.kind.toUpperCase()}  ${item.pinned ? '★ ' : ''}${item.title}  [${item.status}]\n  ${item.snippet}\n`);
+            if (!results.length) process.stdout.write('No matching items.\n');
+            for (const warning of library.warnings) process.stderr.write(warning + '\n');
+        }
+    });
+
+program.command('stats').description('Local activity, streaks, spoken words and WPM')
+    .option('--json', 'Output aggregate JSON').option('--open', 'Open the interactive local dashboard')
+    .action(async options => {
+        // Read-only snapshots also work while the interactive controller records.
+        const stats = await loadInsights(new Date(), undefined, false);
+        if (options.json) process.stdout.write(JSON.stringify(stats, null, 2) + '\n');
+        else if (!options.open) process.stdout.write(renderInsights(stats, process.stdout.columns || 112).join('\n') + '\n');
+        if (options.open) { const file = await saveInsightsView(stats); await openExternal(file); process.stdout.write(file + '\n'); }
+    });
 
 async function readableSession(id: string | undefined, kind: DocumentKind) {
     const session = id ? await loadSession(id) : (await sessions()).find(item => existsSync(documentPath(item, kind)));
@@ -229,7 +318,7 @@ program.command('doctor').description("Check audio backends, devices and local m
         const capabilities = await audio.capabilities();
         const binaryAvailable = (binary: string) => !spawnSync(binary, ['--version'], { timeout: 10_000, stdio: 'ignore' }).error;
         const report: Record<string, unknown> = {
-            platform: process.platform, arch: process.arch, data: home,
+            version, platform: process.platform, arch: process.arch, data: home,
             mic: capabilities.sources.mic, system: capabilities.sources.system,
             deviceChanges: "Poll every 2 seconds; missing pinned devices fall back to the system default.",
             whisperBinary: binaryAvailable(config.whisperBinary), whisperModel: existsSync(config.whisperModel),
@@ -238,6 +327,7 @@ program.command('doctor').description("Check audio backends, devices and local m
             dictationModel: existsSync(config.dictationModel), selectedFormatter: path.basename(config.dictationModel), dictationFormat: config.dictationFormat,
             dictationWhisperModel: path.basename(dictationConfig(config).whisperModel), dictationPolish: config.dictationPolish, dictationWarmSeconds: config.dictationWarmSeconds,
             dictationShortcut: process.platform === 'darwin' ? DICTATION_SHORTCUT : "macOS only",
+            dictationAutoInsert: config.dictationAutoInsert, accessibility: accessibilityStatus(),
         };
         try { report.devices = await audio.devices(); } catch (error) { report.devicesError = errorMessage(error); }
         process.stdout.write(JSON.stringify(report, null, 2) + '\n');

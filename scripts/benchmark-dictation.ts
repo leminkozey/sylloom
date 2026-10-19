@@ -28,7 +28,7 @@ try {
         const aiff = path.join(root, 'speech.aiff'); const wav = path.join(root, 'speech.wav');
         for (const [binary, args] of [
             ['say', ['-v', 'Anna (German (Germany))', '-r', '180', '-o', aiff, sample.text]],
-            ['ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', aiff, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav]],
+            ['ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', aiff, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-fflags', '+bitexact', '-flags:a', '+bitexact', '-map_metadata', '-1', wav]],
         ] as [string, string[]][]) {
             const result = spawnSync(binary, args, { encoding: 'utf8' });
             if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr);

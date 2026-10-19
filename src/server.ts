@@ -40,6 +40,7 @@ export class ModelServer {
     get reusable(): boolean { return !this.stopped && !this.failure; }
 
     start(): Promise<string> {
+        if (this.stopped) return Promise.reject(new Error("Model startup canceled."));
         this.starting ||= this.launch().catch(error => { this.failure ||= error instanceof Error ? error.message : String(error); throw error; });
         return this.starting;
     }
@@ -67,10 +68,15 @@ export class ModelServer {
             while (Date.now() < deadline) {
                 if (this.stopped) throw new Error("Model startup canceled.");
                 if (this.failure) throw new Error(this.failure);
+                let ready = false;
                 try {
                     const response = await fetch(this.url + '/health', { signal: AbortSignal.timeout(1000), redirect: 'error' });
-                    if (response.ok) return this.url;
+                    ready = response.ok;
+                    await response.body?.cancel();
                 } catch { /* Wait for model loading. */ }
+                if (this.stopped) throw new Error("Model startup canceled.");
+                if (this.failure) throw new Error(this.failure);
+                if (ready) return this.url;
                 await delay(150);
             }
             throw new Error("Model startup took longer than two minutes.");

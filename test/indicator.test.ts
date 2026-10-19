@@ -43,3 +43,22 @@ test('native indicator failure leaves dictation running and reports once', conte
     assert.match(warnings[0]!, /AppKit unavailable/);
     close();
 });
+
+for (const stage of ['render', 'hide', 'close'] as const) test('indicator ' + stage + ' failure cannot escape into dictation or shutdown', context => {
+    context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+    const source = Object.assign(new EventEmitter(), { state: 'recording' });
+    const warnings: string[] = [];
+    const detach = attachIndicator(source, message => warnings.push(message), () => ({
+        render() { if (stage === 'render') throw new Error('Render failed'); },
+        hide() { if (stage === 'hide') throw new Error('Hide failed'); },
+        close() { throw new Error('Close failed'); },
+    }));
+    assert.doesNotThrow(() => source.emit('update'));
+    if (stage === 'hide') {
+        source.state = 'ready'; source.emit('update');
+        assert.doesNotThrow(() => context.mock.timers.tick(1200));
+    }
+    assert.doesNotThrow(detach); assert.doesNotThrow(detach);
+    assert.equal(warnings.length, 1); assert.equal(source.listenerCount('update'), 0);
+    assert.doesNotThrow(() => context.mock.timers.tick(5000));
+});

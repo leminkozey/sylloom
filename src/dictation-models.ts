@@ -41,7 +41,7 @@ export class DictationModels {
     }
 
     async prewarm(config: Settings): Promise<void> {
-        await Promise.allSettled((['whisper', 'formatter'] as const).map(async kind => {
+        await Promise.allSettled((['whisper', ...(config.dictationPolish === 'off' ? [] : ['formatter'])] as ('whisper' | 'formatter')[]).map(async kind => {
             const server = await this.get(kind, config);
             await server.start();
         }));

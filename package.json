@@ -1,6 +1,6 @@
 {
   "name": "sylloom",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local dictation, audio recording and structured meeting notes for macOS.",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@studio-sadola/flexaudio": "0.7.0",
     "commander": "15.0.0",
+    "ical.js": "^2.2.1",
     "koffi": "^3.3.3",
     "marked": "^18.1.1",
     "sanitize-html": "^2.18.1",
@@ -46,5 +47,10 @@
     "README.md",
     "DESIGN.md",
     "NOTICE.md"
-  ]
+  ],
+  "homepage": "https://github.com/leminkozey/sylloom",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leminkozey/sylloom.git"
+  }
 }

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-test('installer preserves commands, respects model profiles and stops on failure', async () => {
+test('installer delegates global setup, respects model profiles and stops on failure', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-installer-test-'));
     const project = path.join(root, 'project with spaces');
     const commands = path.join(root, 'commands');
@@ -41,8 +41,7 @@ test('installer preserves commands, respects model profiles and stops on failure
         result = await run(['--no-link']); assert.equal(result.status, 0); assert.match(result.calls, /models install all --keep-selection/);
         result = await run(['--no-link'], { SYLLOOM_QA_NPM_FAIL: '1' }); assert.notEqual(result.status, 0); assert.doesNotMatch(result.calls, /models install/);
         result = await run(['--check'], { SYLLOOM_QA_OS: 'Linux' }); assert.notEqual(result.status, 0); assert.equal(result.calls, '');
-        await writeFile(path.join(links, 'sylloom'), 'existing command');
-        result = await run(['--skip-models']); assert.notEqual(result.status, 0); assert.match(result.stderr, /Existing command was preserved/);
-        assert.equal(await readFile(path.join(links, 'sylloom'), 'utf8'), 'existing command');
+        result = await run(['--skip-models']); assert.equal(result.status, 0); assert.match(result.calls, /sylloom install\n/);
+        result = await run(['--skip-models', '--no-path']); assert.equal(result.status, 0); assert.match(result.calls, /sylloom install --no-path/);
     } finally { await rm(root, { recursive: true, force: true }); }
 });

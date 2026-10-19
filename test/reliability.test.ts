@@ -61,10 +61,11 @@ test('saving failures cannot silently finish a keep-transcript decision', async 
     const item = { ...session(), state: 'stopped' as const }; await saveSession(item);
     const failed = new Error('EACCES: transcript.md');
     const transcription = Object.assign(new (await import('node:events')).EventEmitter(), {
-        failures: 0, processing: '', drain: async () => { throw failed; }, close: async () => {},
+        failures: 0, warnings: [], processing: '', drain: async () => { throw failed; }, close: async () => {},
     }) as InstanceType<typeof Transcription>;
     await assert.rejects(finishSession(item, 'keep', defaults, () => {}, transcription), /EACCES/);
     assert.equal(item.state, 'stopped'); assert.equal(item.decision, null);
+    assert.equal(transcription.listenerCount('update'), 0, 'A failed finish must release its progress callback');
 });
 
 test('failed checkpoint writes never advance the transcription cursor', async () => {

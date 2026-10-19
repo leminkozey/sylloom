@@ -1,11 +1,15 @@
 import koffi from 'koffi';
 import type { HudSurface, IndicatorView } from '../indicator.js';
+import { createLiquidBubble } from './liquid-bubble.js';
 
 // AppKit stays on Node's main thread. This transparent, nonactivating panel
 // ignores mouse events, so focus and clicks stay in the user's application.
 export function createNativeHud(): HudSurface {
     if (process.platform !== 'darwin') throw new Error("The dictation indicator requires macOS.");
-    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit');
+    const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');
+    const psn = koffi.struct({ highLongOfPSN: 'uint32', lowLongOfPSN: 'uint32' });
+    carbon.func('TransformProcessType', 'int32', [koffi.pointer(psn), 'uint32'])({ highLongOfPSN: 0, lowLongOfPSN: 2 }, 4);
+    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit').func('bool NSApplicationLoad(void)')();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');
     const cls = objc.func('void *objc_getClass(str)');
     const sel = objc.func('void *sel_registerName(str)');
@@ -33,8 +37,11 @@ export function createNativeHud(): HudSurface {
     integer(app, sel('setActivationPolicy:'), 1);
     const width = 122;
     const height = 38;
+    const padding = 48;
+    const barCount = 13, barWidth = 3, barStep = 7;
+    const barLeft = (width - (barCount - 1) * barStep - barWidth) / 2;
     const window = objc.func('objc_msgSend', 'void *', ['void *', 'void *', rect, 'ulong', 'ulong', 'bool'])(
-        get(cls('NSPanel'), sel('alloc')), sel('initWithContentRect:styleMask:backing:defer:'), box(0, 0, width, height), 1 << 7, 2, false);
+        get(cls('NSPanel'), sel('alloc')), sel('initWithContentRect:styleMask:backing:defer:'), box(0, 0, width + padding * 2, height + padding * 2), 1 << 7, 2, false);
     if (!window) throw new Error("macOS could not open the dictation indicator.");
     object(window, sel('setTitle:'), string(cls('NSString'), sel('stringWithUTF8String:'), "Sylloom · Dictation"));
     integer(window, sel('setLevel:'), 3);
@@ -46,9 +53,13 @@ export function createNativeHud(): HudSurface {
     bool(window, sel('setHasShadow:'), false);
     bool(window, sel('setIgnoresMouseEvents:'), true);
     object(window, sel('setBackgroundColor:'), get(cls('NSColor'), sel('clearColor')));
-    const content = get(window, sel('contentView'));
-    const bars = Array.from({ length: 13 }, (_, i) => {
-        const bar = initRect(get(cls('NSView'), sel('alloc')), sel('initWithFrame:'), box(16 + i * 7, 18, 3, 2));
+    const root = get(window, sel('contentView'));
+    const surface = initRect(get(cls('NSView'), sel('alloc')), sel('initWithFrame:'), box(padding, padding, width, height));
+    bool(surface, sel('setWantsLayer:'), true); object(root, sel('addSubview:'), surface); send(surface, sel('release'));
+    const content = initRect(get(cls('NSView'), sel('alloc')), sel('initWithFrame:'), box(0, 0, width, height));
+    bool(content, sel('setWantsLayer:'), true); object(surface, sel('addSubview:'), content); send(content, sel('release'));
+    const bars = Array.from({ length: barCount }, (_, i) => {
+        const bar = initRect(get(cls('NSView'), sel('alloc')), sel('initWithFrame:'), box(barLeft + i * barStep, (height - 2) / 2, barWidth, 2));
         bool(bar, sel('setWantsLayer:'), true); number(get(bar, sel('layer')), sel('setCornerRadius:'), 1.5);
         object(content, sel('addSubview:'), bar); send(bar, sel('release'));
         return bar;
@@ -58,10 +69,11 @@ export function createNativeHud(): HudSurface {
     const nextEvent = objc.func('objc_msgSend', 'void *', ['void *', 'void *', 'ulong', 'void *', 'void *', 'bool']);
     const reducedMotion = objc.func('objc_msgSend', 'bool', ['void *', 'void *']);
     const workspace = get(cls('NSWorkspace'), sel('sharedWorkspace'));
-    let visible = false;
+    const bubble = createLiquidBubble({ layer: get(surface, sel('layer')), contentLayer: get(content, sel('layer')), width, height, radius: height / 2,
+        onHidden: () => object(window, sel('orderOut:'), null) });
     let closed = false;
     let previousPhase = '';
-    let envelope = Array<number>(13).fill(0);
+    const envelope = Array<number>(barCount).fill(0);
     send(scope, sel('drain'));
 
     const position = () => {
@@ -74,7 +86,7 @@ export function createNativeHud(): HudSurface {
             if (mouse.x >= frame.origin.x && mouse.x < frame.origin.x + frame.size.width && mouse.y >= frame.origin.y && mouse.y < frame.origin.y + frame.size.height) { screen = candidate; break; }
         }
         const frame = getRect(screen, sel('visibleFrame'));
-        setPoint(window, sel('setFrameOrigin:'), { x: frame.origin.x + (frame.size.width - width) / 2, y: frame.origin.y + 18 });
+        setPoint(window, sel('setFrameOrigin:'), { x: frame.origin.x + (frame.size.width - width - padding * 2) / 2, y: frame.origin.y + 18 - padding });
     };
 
     return {
@@ -92,10 +104,15 @@ export function createNativeHud(): HudSurface {
                 for (let i = 0; i < bars.length; i++) {
                     const value = waiting ? (motion ? 0.15 + (Math.sin(Date.now() / 240 - i * 0.6) + 1) * 0.15 : 0.25) : view.phase === 'recording' ? envelope[i]! : 0.15;
                     const h = 2 + value * 24;
-                    setRect(bars[i], sel('setFrame:'), box(16 + i * 7, (height - h) / 2, 3, h));
+                    setRect(bars[i], sel('setFrame:'), box(barLeft + i * barStep, (height - h) / 2, barWidth, h));
                     object(get(bars[i], sel('layer')), sel('setBackgroundColor:'), get(ink, sel('CGColor')));
                 }
-                if (!visible) { position(); send(window, sel('orderFrontRegardless')); visible = true; }
+                if (bubble.phase === 'hidden' || bubble.phase === 'hiding') {
+                    if (bubble.phase === 'hidden') { position(); number(window, sel('setAlphaValue:'), 0); }
+                    send(window, sel('orderFrontRegardless'));
+                    send(root, sel('layoutSubtreeIfNeeded')); send(window, sel('displayIfNeeded'));
+                    bubble.show(); number(window, sel('setAlphaValue:'), 1); send(cls('CATransaction'), sel('flush'));
+                }
                 for (let i = 0; i < 8; i++) {
                     const event = nextEvent(app, sel('nextEventMatchingMask:untilDate:inMode:dequeue:'), 0xffffffffffffffffn, past, mode, true);
                     if (!event) break;
@@ -104,10 +121,10 @@ export function createNativeHud(): HudSurface {
                 send(app, sel('updateWindows'));
             } finally { send(scope, sel('drain')); }
         },
-        hide() { if (!closed) { object(window, sel('orderOut:'), null); visible = false; } },
+        hide() { if (!closed) bubble.hide(); },
         close() {
             if (closed) return;
-            closed = true; object(window, sel('orderOut:'), null); send(window, sel('close')); send(window, sel('release'));
+            closed = true; bubble.close(); object(window, sel('orderOut:'), null); send(window, sel('close')); send(window, sel('release'));
             send(mode, sel('release')); send(past, sel('release'));
         },
     };

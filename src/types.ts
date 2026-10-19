@@ -10,6 +10,7 @@ export type Session = {
     decision: Decision | null;
     recovered: boolean;
     transcriptionRevision?: number;
+    pinned?: boolean;
     events: { at: string; message: string }[];
 };
 export type Segment = { source: Source; start: number; end: number; text: string };
@@ -38,7 +39,24 @@ export type Settings = {
     dictationFormat: DictationFormat;
     dictationWhisperModel: string;
     dictationWarmSeconds: number;
-    dictationPolish: 'auto' | 'always';
+    dictationPolish: 'auto' | 'always' | 'off';
+    dictationAutoInsert: boolean;
+    globalShortcuts: boolean;
+    copyLatestShortcut: boolean;
+    dictationIndicator: boolean;
+    dictationNotifications: boolean;
+    calendarFile: string;
+    bridgeEnabled: boolean;
+    detectAppleCalls: boolean;
+    detectWhatsAppCalls: boolean;
+    detectTeamsCalls: boolean;
+    callAutoStop: boolean;
+    calendarAutoRefresh: boolean;
+    calendarOutlook: boolean;
+    calendarSystem: boolean;
+    meetingReminders: boolean;
+    reminderMinutes: number;
+    teamsPort: number;
 };
 export function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);

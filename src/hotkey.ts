@@ -1,10 +1,11 @@
 import koffi from 'koffi';
 
 export const DICTATION_SHORTCUT = 'Ctrl+Option+Space';
+export const COPY_SHORTCUT = 'Ctrl+Option+C';
 
 // Carbon registers specific shortcuts without monitoring unrelated keystrokes.
 // All calls stay on Node's main thread, as required by HIToolbox.
-export function registerHotkeys(toggle: () => void, cancel: () => void): () => void {
+export function registerHotkeys(toggle: () => void, cancel: () => void, copy?: () => void): () => void {
     if (process.platform !== 'darwin') throw new Error("Global shortcuts currently require macOS.");
     const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');
     const psn = koffi.struct({ highLongOfPSN: 'uint32', lowLongOfPSN: 'uint32' });
@@ -23,7 +24,7 @@ export function registerHotkeys(toggle: () => void, cancel: () => void): () => v
     const callback = koffi.register((_next: unknown, event: unknown) => {
         const id = { signature: 0, id: 0 };
         if (parameter(event, 0x2d2d2d2d, 0x686b6964, null, 8, null, id) === 0 && id.signature === 0x6d656574) {
-            if (id.id === 1) toggle(); else if (id.id === 2) cancel();
+            if (id.id === 1) toggle(); else if (id.id === 2) cancel(); else if (id.id === 3) copy?.();
             return 0;
         }
         return -9874;
@@ -37,7 +38,7 @@ export function registerHotkeys(toggle: () => void, cancel: () => void): () => v
     const close = () => { if (closed) return; closed = true; clearInterval(timer); for (const ref of refs) unregister(ref); if (handler[0]) remove(handler[0]); koffi.unregister(callback); };
     try {
         if (install(target, callback, 1, { eventClass: 0x6b657962, eventKind: 5 }, null, handler) !== 0) throw new Error("Could not install the macOS hotkey handler.");
-        for (const [code, id] of [[49, 1], [53, 2]]) {
+        for (const [code, id] of [[49, 1], [53, 2], ...(copy ? [[8, 3]] : [])]) {
             const ref: unknown[] = [null];
             const status = register(code, 4096 | 2048, { signature: 0x6d656574, id }, target, 1, ref);
             if (status !== 0) throw new Error("Global shortcut is in use or unavailable (macOS " + status + ').');

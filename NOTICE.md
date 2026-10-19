@@ -20,6 +20,7 @@ These packages retain their own license notices, distributed with their npm pack
 - [flexaudio](https://github.com/Studio-Sadola/flexaudio): native audio capture, MIT.
 - [Koffi](https://koffi.dev): native API access, MIT.
 - [Commander](https://github.com/tj/commander.js): CLI command parsing, MIT.
+- [ical.js](https://github.com/kewisch/ical.js): local ICS parsing, MPL-2.0.
 - [marked](https://github.com/markedjs/marked): Markdown parsing, MIT.
 - [sanitize-html](https://github.com/apostrophecms/sanitize-html): HTML sanitization, MIT.
 - [slice-ansi](https://github.com/chalk/slice-ansi) and

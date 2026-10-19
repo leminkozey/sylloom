@@ -4,24 +4,26 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_MODELS=all
 LINK_COMMAND=1
+CONFIGURE_PATH=1
 CHECK_ONLY=0
-BIN_DIR="${SYLLOOM_BIN_DIR:-$HOME/.local/bin}"
 
 usage() {
     cat <<'HELP'
 Sylloom installer for macOS on Apple Silicon
 
-Usage: ./install.sh [--dictation-only | --skip-models] [--no-link] [--check]
+Usage: ./install.sh [--dictation-only | --skip-models] [--no-link] [--no-path] [--check]
 
   --dictation-only  Download Whisper Turbo and the dictation formatter only
   --skip-models     Install dependencies and build without downloading models
   --no-link         Do not create a sylloom command in ~/.local/bin
+  --no-path         Install the command without changing shell configuration
   --check           Check requirements without installing or changing anything
   --help           Show this help
 
-By default, installs four local models (about 9.3 GiB), then links the command.
+By default, installs four local models (about 9.3 GiB), then installs the command
+and configures PATH for zsh, bash or fish if needed. No sudo is used.
 Set SYLLOOM_HOME to choose a data directory; SYLLOOM_BIN_DIR chooses the link directory.
-Existing recordings, settings and commands are never overwritten by this script.
+Existing recordings, settings and unrelated commands are preserved.
 HELP
 }
 
@@ -30,6 +32,7 @@ for argument in "$@"; do
         --dictation-only) INSTALL_MODELS=dictation ;;
         --skip-models) INSTALL_MODELS=none ;;
         --no-link) LINK_COMMAND=0 ;;
+        --no-path) CONFIGURE_PATH=0 ;;
         --check) CHECK_ONLY=1 ;;
         --help|-h) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$argument" >&2; usage >&2; exit 2 ;;
@@ -104,22 +107,11 @@ case "$INSTALL_MODELS" in
 esac
 
 if (( LINK_COMMAND )); then
-    mkdir -p "$BIN_DIR"
-    target="$BIN_DIR/sylloom"
-    if [[ -e "$target" || -L "$target" ]]; then
-        if [[ ! -L "$target" || "$(readlink "$target")" != "$ROOT/sylloom" ]]; then
-            printf 'Sylloom is built. Existing command was preserved: %s\nRun: %s\n' "$target" "$ROOT/sylloom" >&2
-            exit 1
-        fi
-    else
-        ln -s "$ROOT/sylloom" "$target"
-    fi
-    case ":$PATH:" in
-        *":$BIN_DIR:"*) ;;
-        *) printf '\nAdd this directory to your shell PATH: %s\n' "$BIN_DIR" ;;
-    esac
+    if (( CONFIGURE_PATH )); then node "$ROOT/sylloom" install;
+    else node "$ROOT/sylloom" install --no-path; fi
 fi
 
-printf '\nSylloom is ready. Start it with: %s\n' "$ROOT/sylloom"
+if (( LINK_COMMAND )); then printf '\nSylloom is ready. Start it from any directory with: sylloom\n';
+else printf '\nSylloom is ready. Start it with: %s\n' "$ROOT/sylloom"; fi
 printf 'Allow microphone and system audio recording for your terminal when macOS asks.\n'
-if [[ "$INSTALL_MODELS" == none ]]; then printf 'Models were skipped. Install them with: ./sylloom models install all\n'; fi
+if [[ "$INSTALL_MODELS" == none ]]; then printf 'Models were skipped. Install them with: sylloom models install all\n'; fi

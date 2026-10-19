@@ -21,17 +21,23 @@ export function attachIndicator(source: Source, warning: (message: string) => vo
     let timer: NodeJS.Timeout | undefined;
     let hideTimer: NodeJS.Timeout | undefined;
     let failed = false;
-    const hide = () => { clearInterval(timer); surface?.hide(); };
+    const unavailable = (error: unknown) => {
+        if (failed) return;
+        failed = true; clearInterval(timer); clearTimeout(hideTimer);
+        const current = surface; surface = undefined;
+        try { current?.close(); } catch { /* A broken visual must not interrupt dictation. */ }
+        warning("Dictation indicator unavailable: " + String(error));
+    };
+    const hide = () => {
+        clearInterval(timer);
+        try { surface?.hide(); } catch (error) { unavailable(error); }
+    };
     const render = () => {
         if (failed) return;
         const view = indicatorView(source);
         if (!view) { hide(); return; }
         try { surface ||= create(); surface.render(view); }
-        catch (error) {
-            failed = true; clearInterval(timer); clearTimeout(hideTimer);
-            surface?.close(); surface = undefined;
-            warning("Dictation indicator unavailable: " + String(error));
-        }
+        catch (error) { unavailable(error); }
     };
     const update = () => {
         if (failed) return;
@@ -45,5 +51,9 @@ export function attachIndicator(source: Source, warning: (message: string) => vo
         } else { timer = setInterval(render, 50); timer.unref(); }
     };
     source.on('update', update);
-    return () => { source.off('update', update); clearInterval(timer); clearTimeout(hideTimer); surface?.close(); surface = undefined; };
+    return () => {
+        source.off('update', update); clearInterval(timer); clearTimeout(hideTimer);
+        const current = surface; surface = undefined;
+        try { current?.close(); } catch (error) { unavailable(error); }
+    };
 }

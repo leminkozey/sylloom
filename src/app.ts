@@ -1,12 +1,13 @@
 import { existsSync } from 'node:fs';
+import { manageSettings } from './settings-ui.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Audio } from './audio.js';
 import { Recorder } from './recorder.js';
 import { startControl } from './control.js';
 import { Transcription, timestamp } from './transcription.js';
-import { createSession, home, nameSession, saveSettings, sessionDirectory, sessions } from './store.js';
-import { installModel, models } from './models.js';
+import { createSession, home, nameSession, saveSettings, sessionDirectory, scanSessions } from './store.js';
+import { modelMenu } from './model-ui.js';
 import { finishSession, reopenSession } from './workflow.js';
 import { documentPath, exportDocument, exportName, openDocument } from './documents.js';
 import type { DocumentKind, ExportFormat } from './documents.js';
@@ -15,11 +16,13 @@ import type { Choice } from './terminal/screen.js';
 import style from './terminal/style.js';
 import type { Decision, Session, Settings, Source } from './types.js';
 import { errorMessage } from './types.js';
-import { createInterface, dictationMenu } from './dictation-ui.js';
-import { formatLabels } from './formatter.js';
-import { copyText } from './clipboard.js';
-import { dictationConfig } from './dictation-models.js';
-import type { DictationFormat } from './types.js';
+import { createInterface, dictationMenu, dictationItemMenu } from './dictation-ui.js';
+import type { Dictation } from './dictation.js';
+import { libraryMenu, editLibraryMetadata } from './library-ui.js';
+import { loadLibrary } from './library.js';
+import { insightsMenu } from './insights-ui.js';
+import { recordingControls, recoveryMenu } from './bridge-ui.js';
+import { copyText, notify } from './clipboard.js';
 
 const back = { value: 'back', name: "Back" };
 const choices = (values: [string, string, string?][]): Choice[] => values.map(([value, name, hint]) => ({ value, name, hint }));
@@ -48,82 +51,10 @@ export async function deviceMenu(screen: Screen, config: Settings, source: Sourc
     } finally { if (!recorder) await audio.close(); }
 }
 
-export async function modelMenu(screen: Screen, config: Settings): Promise<void> {
-    for (;;) {
-        const selected = await screen.select("Local models", choices([
-            ['whisper', "Install Whisper large-v3", "Full model, about 2.9 GiB. Transcribes after recording."],
-            ['dictation-whisper', "Install fast dictation model", "Whisper large-v3-turbo, about 1.5 GiB. Dictation only."],
-            ['llama', "Install note model", "Qwen3 4B Q4_K_M, about 2.33 GiB. Local meeting notes."],
-            ['formatter', "Install dictation formatter", "Qwen3.5 4B, German and English. Formatting only, about 2.6 GiB."],
-            ['formatter-path', "Choose custom dictation formatter", config.dictationModel],
-            ['whisper-path', "Choose custom meeting Whisper model", config.whisperModel],
-            ['dictation-whisper-path', "Choose dictation Whisper model", dictationConfig(config).whisperModel],
-            ['llm-path', "Choose custom GGUF note model", config.llmModel],
-            ['backend', "Note backend: " + (config.llm === 'llama' ? 'llama.cpp' : 'Ollama'), "Both backends run locally."],
-            ['ollama-model', "Ollama model: " + config.ollamaModel],
-            ['back', "Back"],
-        ]), { back: true, detail: (existsSync(config.whisperModel) ? "Whisper ready" : "Whisper missing") + ' · ' + (existsSync(config.llmModel) ? "GGUF ready" : "GGUF missing") });
-        if (['quit', 'back', 'settings'].includes(selected)) return;
-        try {
-            if (selected === 'whisper' || selected === 'llama' || selected === 'formatter' || selected === 'dictation-whisper') {
-                const target = await screen.task(models[selected].label + ": installing", (update, signal) => installModel(selected, (received, total) => {
-                    update(Math.round(received / total * 100) + '% · ' + Math.round(received / 1024 / 1024) + ' / ' + Math.round(total / 1024 / 1024) + ' MiB');
-                }, signal));
-                if (selected === 'whisper') config.whisperModel = target;
-                else if (selected === 'dictation-whisper') config.dictationWhisperModel = target;
-                else if (selected === 'formatter') config.dictationModel = target;
-                else { config.llmModel = target; config.llm = 'llama'; }
-            } else if (selected === 'backend') config.llm = config.llm === 'llama' ? 'ollama' : 'llama';
-            else if (selected === 'ollama-model') {
-                const value = await screen.input("Ollama model", "Name of an already installed local model", config.ollamaModel);
-                if (value?.trim()) config.ollamaModel = value.trim();
-            } else {
-                const key = selected === 'whisper-path' ? 'whisperModel' : selected === 'dictation-whisper-path' ? 'dictationWhisperModel' : selected === 'formatter-path' ? 'dictationModel' : 'llmModel';
-                const value = await screen.input("Local model file", "Absolute path to the model file", config[key]);
-                if (value) {
-                    if (!existsSync(value)) throw new Error("File not found: " + value);
-                    config[key] = path.resolve(value);
-                }
-            }
-            await saveSettings(config);
-        } catch (error) { await screen.notice("Model setup failed", errorMessage(error)); }
-    }
-}
+export { modelMenu };
 
 export async function settingsMenu(screen: Screen, config: Settings): Promise<void> {
-    for (;;) {
-        const selected = await screen.select("Settings", choices([
-            ['input', "Microphone", config.input], ['output', "System audio", config.output],
-            ['language', "Transcription language: " + config.language, "de, en or auto"],
-            ['dictation-format', "Dictation format: " + formatLabels[config.dictationFormat], "Message, email or list. The original transcript stays available."],
-            ['dictation-polish', "Dictation polish: " + (config.dictationPolish === 'always' ? "Always use model" : "Automatic"), "Automatic passes through clean messages. Corrections, lists and emails use the formatter."],
-            ['dictation-warm', "Keep dictation models warm: " + config.dictationWarmSeconds + ' s', "Faster repeated dictation uses more RAM temporarily. 0 frees models after each dictation."],
-            ['models', "Local models"], ['back', "Back"],
-        ]), { back: true, detail: "Recording and processing stay on this device." });
-        if (['back', 'quit', 'settings'].includes(selected)) return;
-        try {
-            if (selected === 'input' || selected === 'output') await deviceMenu(screen, config, selected === 'input' ? 'mic' : 'system');
-            if (selected === 'models') await modelMenu(screen, config);
-            if (selected === 'dictation-polish') config.dictationPolish = config.dictationPolish === 'always' ? 'auto' : 'always';
-            if (selected === 'dictation-warm') {
-                const value = await screen.input("Keep dictation models warm", "Idle seconds, from 0 to 600", String(config.dictationWarmSeconds));
-                if (value !== null) {
-                    const seconds = Number(value);
-                    if (!value.trim() || !Number.isInteger(seconds) || seconds < 0 || seconds > 600) throw new Error("Enter a whole number from 0 to 600 seconds.");
-                    config.dictationWarmSeconds = seconds;
-                }
-            }
-            if (selected === 'dictation-format') {
-                const format = await screen.select("Dictation format", [...Object.entries(formatLabels).map(([value, name]) => ({ value, name })), back], { back: true });
-                if (Object.hasOwn(formatLabels, format)) config.dictationFormat = format as DictationFormat;
-            }
-            if (selected === 'language') {
-                const value = await screen.input("Transcription language", "Language code, such as de, en or auto", config.language);
-                if (value && /^[a-z]{2,3}$/.test(value.trim())) config.language = value.trim();
-            }
-            await saveSettings(config);
-        } catch (error) { await screen.notice("Setting not saved", errorMessage(error)); }
-    }
+    await manageSettings(screen, config, source => deviceMenu(screen, config, source));
 }
 
 export async function finishFlow(screen: Screen, session: Session, config: Settings, transcription?: Transcription): Promise<boolean> {
@@ -182,12 +113,16 @@ export async function documentMenu(screen: Screen, session: Session, config: Set
         if (hasNote || hasTranscript) items.push({ value: 'read', name: hasNote ? "Read note in terminal" : "Read transcript in terminal" },
             { value: 'open', name: "Open in browser" }, { value: 'copy', name: "Copy Markdown" }, { value: 'export', name: "Export" });
         if (hasNote && hasTranscript) items.push({ value: 'transcript', name: "Read transcript in terminal" });
-        items.push({ value: 'reprocess', name: "Reprocess audio", hint: "Transcribe again and choose what to keep. Existing documents stay until processing." }, back);
+        items.push({ value: 'organize', name: 'Rename / pin' }, { value: 'reprocess', name: "Reprocess audio", hint: "Transcribe again and choose what to keep. Existing documents stay until processing." }, back);
         const selected = await screen.select(session.name || "Recording", items, { back: true, detail: "Read, open and export" });
         if (selected === 'quit') return false;
         if (selected === 'back') return true;
         try {
             if (selected === 'settings') { await settingsMenu(screen, config); continue; }
+            if (selected === 'organize') {
+                const item = (await loadLibrary()).items.find(item => item.kind === 'meeting' && item.id === session.id);
+                if (item) { await editLibraryMetadata(screen, item); Object.assign(session, item.data); }
+            }
             if (selected === 'read' || selected === 'transcript') {
                 const text = await readFile(documentPath(session, selected === 'transcript' ? 'transcript' : kind), 'utf8');
                 await screen.view(session.name || "Recording", () => text);
@@ -214,7 +149,7 @@ export async function documentMenu(screen: Screen, session: Session, config: Set
                 const output = await screen.input("Export path", "Destination file. Existing files will not be overwritten.", suggested);
                 if (!output) continue;
                 const target = await exportDocument(session, document, output, format);
-                await screen.notice('Export gespeichert', target);
+                await screen.notice('Export saved', target);
             }
             if (selected === 'reprocess') {
                 await reopenSession(session);
@@ -232,22 +167,23 @@ function meter(rms: number): string {
 
 export async function recordFlow(screen: Screen, config: Settings): Promise<boolean> {
     if (screen.dictation?.busy) throw new Error("Stop or cancel dictation first.");
-    screen.recordingActive = true;
+    if (!screen.bridge) screen.recordingActive = true;
     try { return await captureFlow(screen, config); }
     finally { screen.recordingActive = false; }
 }
 
 async function captureFlow(screen: Screen, config: Settings): Promise<boolean> {
-    const session = await createSession();
-    const recorder = new Recorder(session, config);
+    const bridge = screen.bridge;
+    if (bridge) await bridge.startRecording();
+    const session = bridge?.currentSession || await createSession();
+    const recorder = bridge?.currentRecorder || new Recorder(session, config);
     let stopRequested = false;
     let failure = '';
     let closeControl: (() => Promise<void>) | undefined;
     recorder.on('stopRequested', () => { stopRequested = true; });
     recorder.on('failure', error => { failure = errorMessage(error); stopRequested = true; });
     try {
-        await screen.task("Starting recording", () => recorder.start());
-        closeControl = await startControl(recorder);
+        if (!bridge) { await screen.task("Starting recording", () => recorder.start()); closeControl = await startControl(recorder); }
         while (!stopRequested) {
             if (screen.quitRequested) { screen.quitRequested = false; break; }
             const selected = await screen.select("Record meeting", () => choices([
@@ -267,7 +203,7 @@ async function captureFlow(screen: Screen, config: Settings): Promise<boolean> {
                 ],
                 footer: "Space Pause · I/O Devices · M Microphone · S Stop",
                 shortcuts: { ' ': 'pause', p: 'pause', i: 'input', o: 'output', s: 'stop', m: 'mute-mic' },
-                complete: () => stopRequested ? 'stop' : undefined,
+                complete: () => stopRequested || session.state === 'stopped' ? 'stop' : undefined,
             });
             try {
                 if (selected === 'stop' || selected === 'quit') { screen.quitRequested = false; break; }
@@ -278,12 +214,12 @@ async function captureFlow(screen: Screen, config: Settings): Promise<boolean> {
                 if (selected === 'mute-system') await recorder.toggleMute('system');
             } catch (error) { await screen.notice("Recording continues", errorMessage(error)); }
         }
-        await screen.task("Stop recording", () => recorder.stop());
-        await closeControl(); closeControl = undefined;
+        await screen.task("Stop recording", async () => { if (bridge) await bridge.stopRecording(); else await recorder.stop(); });
+        await closeControl?.(); closeControl = undefined;
         if (failure) await screen.notice("Recording stopped with an error", failure);
         return await finishFlow(screen, session, config);
     } finally {
-        await recorder.stop();
+        if (bridge) await bridge.stopRecording(); else await recorder.stop();
         await closeControl?.();
     }
 }
@@ -294,31 +230,39 @@ export async function mainMenu(config: Settings): Promise<void> {
     try {
         for (;;) {
             if (screen.quitRequested) return;
-            const all = await sessions();
+            const catalog = await scanSessions();
+            const all = catalog.sessions;
             const pending = all.find(session => session.state !== 'done');
-            const selected = await screen.select("Capture meetings locally", choices([
-                [pending ? 'finish' : 'record', pending ? "Finish pending recording" : "Start recording", pending?.name || "Microphone and system audio, recorded separately."],
-                ['dictation', "Dictation", "Ctrl+Option+Space starts and stops in any app. Text is formatted and copied locally."],
-                ['recordings', "Recordings", all.length + " recording(s) saved"],
+            if (pending && ui.bridge.finishRequested) {
+                ui.bridge.finishRequested = false;
+                if (!await finishFlow(screen, pending, config)) return;
+                continue;
+            }
+            const revision = ui.bridge.revision;
+            const selected = await screen.select("Capture meetings locally", () => choices([
+                [ui.bridge.recording ? 'recording-controls' : pending ? 'finish' : catalog.issues.length ? 'recovery' : 'record', ui.bridge.recording ? 'Recording controls' : pending ? "Finish pending recording" : catalog.issues.length ? 'Review unreadable recording' : "Start recording", catalog.issues.length ? 'Metadata needs attention. Dictation remains available.' : pending?.name || "Microphone and system audio, recorded separately."],
+                ['dictation', "Dictation", "Ctrl+Option+Space in any app. Format, insert or copy, and save locally."],
+                ['library', 'Library', 'Search notes, recordings and every dictation. Pin what matters.'],
+                ['insights', 'Insights', 'Daily activity, streaks, spoken words and WPM.'],
+                ['recovery', 'Storage and recovery', 'Saved audio, interrupted captures, models and available space.'],
                 ['settings', "Settings"], ['models', "Local models"], ['quit', "Quit"],
-            ]), { detail: (existsSync(config.whisperModel) ? "Transcription model ready" : "Set up Whisper first") + " · Process after recording", shortcuts: { f8: 'dictation-toggle' } });
+            ]), { detail: (existsSync(config.whisperModel) ? "Transcription model ready" : "Set up Whisper first") + " · Process after recording", shortcuts: { f8: 'dictation-toggle' }, complete: () => ui.bridge.revision !== revision ? 'refresh' : undefined });
             try {
                 if (selected === 'quit') return;
                 if (selected === 'dictation') await dictationMenu(screen);
-                if (selected === 'dictation-toggle') { void ui.service.toggle(); }
+                if (selected === 'dictation-toggle') { void ui.service.toggle().catch(error => notify(errorMessage(error))); }
                 if (selected === 'settings') await settingsMenu(screen, config);
                 if (selected === 'models') await modelMenu(screen, config);
+                if (selected === 'insights') await insightsMenu(screen);
+                if (selected === 'recording-controls') await recordingControls(screen);
+                if (selected === 'recovery') await recoveryMenu(screen, config);
                 if (selected === 'record' && !await recordFlow(screen, config)) return;
                 if (selected === 'finish' && pending && !await finishFlow(screen, pending, config)) return;
-                if (selected === 'recordings') {
-                    const id = await screen.select("Recordings", [...all.map(session => ({ value: session.id,
-                        name: (session.name || "Untitled") + ' · ' + new Date(session.startedAt).toLocaleString("en-GB") + (session.state !== 'done' ? " · OPEN" : ''),
-                        hint: sessionDirectory(session.id),
-                    })), back], { back: true });
-                    const session = all.find(item => item.id === id);
-                    if (session?.state === 'stopped') { if (!await finishFlow(screen, session, config)) return; }
-                    else if (session && !await documentMenu(screen, session, config)) return;
-                }
+                if (selected === 'library') await libraryMenu(screen, async item => {
+                    if (item.kind === 'dictation') await dictationItemMenu(screen, ui.service, item.data as Dictation);
+                    else if (item.data.state === 'stopped') await finishFlow(screen, item.data, config);
+                    else await documentMenu(screen, item.data, config);
+                });
             } catch (error) { await screen.notice("Action not completed", errorMessage(error)); }
         }
     } finally { await ui.close(); }

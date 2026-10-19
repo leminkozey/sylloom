@@ -2,7 +2,7 @@
   <title id="title">Sylloom</title>
   <desc id="description">Seven vertical bars form a voice waveform.</desc>
   <rect width="112" height="112" rx="22" fill="#171719"/>
-  <g fill="#888bf0">
+  <g fill="#ffffff">
     <rect x="18" y="78" width="7" height="10" rx="2"/>
     <rect x="29" y="32" width="7" height="56" rx="2"/>
     <rect x="40" y="55" width="7" height="33" rx="2"/>

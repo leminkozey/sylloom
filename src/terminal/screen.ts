@@ -8,7 +8,7 @@ import { onShutdown } from '../lifecycle.js';
 import { renderMarkdown, wrapText } from './markdown.js';
 import { name, version, mark } from '../brand.js';
 
-export type Choice = { value: string; name: string; hint?: string };
+export type Choice = { value: string; name: string; hint?: string; toggle?: boolean };
 type SelectionOptions = {
     detail?: string | (() => string);
     before?: () => string[];
@@ -16,6 +16,7 @@ type SelectionOptions = {
     footer?: string;
     shortcuts?: Record<string, string>;
     complete?: () => string | undefined;
+    initialValue?: string;
 };
 
 export function fit(text: string, width: number): string {
@@ -32,6 +33,7 @@ export class Screen {
     taskActive = false;
     recordingActive = false;
     dictation?: import('../dictation.js').DictationService;
+    bridge?: import('../meeting-bridge.js').MeetingBridge;
     private keyHandler?: (text: string, key: Key) => void;
     private redraw?: () => void;
     private previous = '';
@@ -66,8 +68,8 @@ export class Screen {
         const lines: string[] = [];
         if (this.fullHeader) {
             lines.push('');
-            mark.forEach((line, index) => lines.push('  ' + style(line, 'accent') + (index === 1 ? '   ' + style(name, 'strong') : index === 2 ? '   ' + style(version, 'muted') : '')));
-        } else lines.push('  ' + style(name, 'accent'));
+            mark.forEach((line, index) => lines.push('  ' + style(line, 'logo') + (index === 1 ? '   ' + style(name, 'logo') : index === 2 ? '   ' + style(version, 'muted') : '')));
+        } else lines.push('  ' + style(name, 'logo'));
         lines.push('  ' + style(fit(cleanText(title), width), 'strong'));
         lines.push('  ' + style(fit(cleanText(detail), width), 'muted'));
         lines.push('  ' + style('─'.repeat(width), 'divider'), '');
@@ -90,7 +92,8 @@ export class Screen {
     select(title: string, choices: Choice[] | (() => Choice[]), options: SelectionOptions = {}): Promise<string> {
         if (this.quitRequested) return Promise.resolve('quit');
         return new Promise(resolve => {
-            let selected = 0;
+            const initial = typeof choices === 'function' ? choices() : choices;
+            let selected = Math.max(0, initial.findIndex(row => row.value === options.initialValue));
             let current: Choice[] = [];
             const done = (value: string) => { this.keyHandler = undefined; this.redraw = undefined; resolve(value); };
             this.redraw = () => {
@@ -104,8 +107,12 @@ export class Screen {
                 const lines = [...before];
                 for (let index = start; index < Math.min(current.length, start + capacity); index++) {
                     const choice = current[index]!;
-                    const text = (selected === index ? '› ' : '  ') + cleanText(choice.name);
-                    lines.push(selected === index ? style(text, 'accent') : text);
+                    const prefix = selected === index ? '› ' : '  ';
+                    const width = Math.min(this.width, 64);
+                    const label = choice.toggle === undefined ? cleanText(choice.name) : fit(cleanText(choice.name), width - 11).padEnd(width - 9);
+                    const text = prefix + label;
+                    const state = choice.toggle === undefined ? '' : style(choice.toggle ? '● On' : '○ Off', choice.toggle ? 'OK' : 'muted');
+                    lines.push((selected === index ? style(text, 'accent') : text) + state);
                 }
                 lines.push('', style(current[selected]?.hint || '', 'muted'));
                 const detail = typeof options.detail === 'function' ? options.detail() : options.detail || '';
@@ -118,6 +125,7 @@ export class Screen {
                 if (key.name === 'up' || (key.ctrl && key.name === 'p')) selected = (selected - 1 + current.length) % Math.max(1, current.length);
                 else if (key.name === 'down' || (key.ctrl && key.name === 'n')) selected = (selected + 1) % Math.max(1, current.length);
                 else if (key.name === 'return' && current[selected]) { done(current[selected]!.value); return; }
+                else if (current[selected]?.toggle !== undefined && (text === ' ' || key.name === 'left' || key.name === 'right')) { done(current[selected]!.value); return; }
                 else if (options.shortcuts?.[key.name || ''] || (text && options.shortcuts?.[text])) { done((options.shortcuts[key.name || ''] || options.shortcuts[text])!); return; }
                 this.redraw?.();
             };
@@ -125,15 +133,15 @@ export class Screen {
         });
     }
 
-    input(title: string, detail: string, initial = ''): Promise<string | null> {
+    input(title: string, detail: string, initial = '', options: { secret?: boolean } = {}): Promise<string | null> {
         return new Promise(resolve => {
             const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
             let letters = [...segmenter.segment(initial)].map(item => item.segment);
             let cursor = letters.length;
             const done = (value: string | null) => { this.redraw = undefined; this.keyHandler = undefined; resolve(value); };
             this.redraw = () => {
-                let left = letters.slice(0, cursor).join('');
-                const right = letters.slice(cursor).join('');
+                let left = options.secret ? '•'.repeat(cursor) : letters.slice(0, cursor).join('');
+                const right = options.secret ? '•'.repeat(letters.length - cursor) : letters.slice(cursor).join('');
                 while (stringWidth(left) > this.width - 5) left = [...segmenter.segment(left)].slice(1).map(item => item.segment).join('');
                 this.frame(title, detail, [style('› ', 'accent') + left + style('│', 'accent') + right], "Enter Save · Esc Cancel · ←/→ Cursor", "Ctrl+C Leave pending and quit");
             };
@@ -188,6 +196,70 @@ export class Screen {
 
     async notice(title: string, message: string): Promise<void> {
         await this.select(title, [{ value: 'back', name: "Back" }], { back: true, before: () => wrapText(cleanText(message), this.width) });
+    }
+
+    browse(title: string, items: (query: string) => Choice[], options: { detail: () => string; shortcut?: (key: Key) => boolean | string; search?: { query: string } }): Promise<string | undefined> {
+        let query = options.search?.query || ''; let selected = 0; let choices: Choice[] = [];
+        const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+        return new Promise(resolve => {
+            const done = (value?: string) => { if (options.search) options.search.query = query; this.redraw = undefined; this.keyHandler = undefined; resolve(value); };
+            this.redraw = () => {
+                const selectedValue = choices[selected]?.value;
+                choices = items(query);
+                const index = choices.findIndex(choice => choice.value === selectedValue);
+                selected = index >= 0 ? index : Math.max(0, Math.min(selected, choices.length - 1));
+                const capacity = Math.max(1, this.capacity - 4);
+                const start = Math.max(0, Math.min(selected - capacity + 1, choices.length - capacity));
+                const lines = [style('Search  ', 'muted') + fit(query || 'Type to search…', this.width - 8), ''];
+                if (!choices.length) lines.push(style('No matches. Clear the search or change filters.', 'muted'));
+                for (let index = start; index < Math.min(choices.length, start + capacity); index++) {
+                    lines.push(style((index === selected ? '› ' : '  ') + choices[index]!.name, index === selected ? 'accent' : 'strong'));
+                }
+                lines.push('', style(choices[selected]?.hint || '', 'muted'));
+                this.frame(title, options.detail() + ' · ' + choices.length + ' results', lines,
+                    'Tab Type · Ctrl+P Pinned · Ctrl+S Sort · Ctrl+F Filters', 'Enter Open · Ctrl+U Clear · Ctrl+R Refresh · Esc Back');
+            };
+            this.keyHandler = (text, key) => {
+                if (key.ctrl && key.name === 'c') { this.quitRequested = true; done(); return; }
+                if (key.name === 'escape') { done(); return; }
+                if (key.name === 'return' && choices[selected]) { done(choices[selected]!.value); return; }
+                if (key.name === 'up' || key.name === 'down') selected = (selected + (key.name === 'up' ? -1 : 1) + choices.length) % Math.max(1, choices.length);
+                else {
+                    const action = options.shortcut?.(key);
+                    if (typeof action === 'string') { done(action); return; }
+                    if (action) { selected = 0; choices = []; this.redraw?.(); return; }
+                    if (key.ctrl && key.name === 'u') { query = ''; selected = 0; choices = []; }
+                    else if (key.name === 'backspace') { query = [...segmenter.segment(query)].slice(0, -1).map(part => part.segment).join(''); selected = 0; choices = []; }
+                    else if (!key.ctrl && !key.meta && text && !/^[\x00-\x1f\x7f]/.test(text)) { query = (query + cleanText(text).replace(/\s+/g, ' ')).slice(0, 300); selected = 0; choices = []; }
+                }
+                this.redraw?.();
+            };
+            this.redraw();
+        });
+    }
+
+    page(title: string, render: (width: number) => string[], options: { footer?: string; actions?: Record<string, string> } = {}): Promise<string | undefined> {
+        let offset = 0;
+        return new Promise(resolve => {
+            const done = (value?: string) => { this.keyHandler = undefined; this.redraw = undefined; resolve(value); };
+            this.redraw = () => {
+                const lines = render(this.width); const capacity = this.capacity;
+                offset = Math.max(0, Math.min(offset, lines.length - capacity));
+                this.frame(title, 'Line ' + (offset + 1) + ' of ' + lines.length, lines.slice(offset, offset + capacity),
+                    options.footer || '↑/↓ Scroll · PgUp/PgDn Page · Home/End', 'Enter or Esc Back · Ctrl+C Quit');
+            };
+            this.keyHandler = (_text, key) => {
+                if (key.ctrl && key.name === 'c') { this.quitRequested = true; done(); return; }
+                if (key.name === 'escape' || key.name === 'return') { done(); return; }
+                if (options.actions?.[key.name || '']) { done(options.actions[key.name!]!); return; }
+                if (key.name === 'up' || key.name === 'pageup') offset -= key.name === 'pageup' ? this.capacity : 1;
+                if (key.name === 'down' || key.name === 'pagedown') offset += key.name === 'pagedown' ? this.capacity : 1;
+                if (key.name === 'home') offset = 0;
+                if (key.name === 'end') offset = Number.MAX_SAFE_INTEGER;
+                this.redraw?.();
+            };
+            this.redraw();
+        });
     }
 
     async view(title: string, text: () => string, options: { markdown?: boolean } = { markdown: true }): Promise<void> {

@@ -5,6 +5,9 @@ This directory can also live inside a larger workspace. Do not create nested Git
 repositories or change parent-workspace remotes.
 
 - Run `npm run check`, `npm test`, `npm run build` and `npm run release:check` before finishing changes.
+- Keep the agreed development version in package.json as the single source for
+  CLI and header. Change it when a release/version change is requested and
+  synchronize the root package-lock versions. Routine fixes keep that version.
 - Product UI, errors, documentation and generated meeting notes are English.
   Preserve the language of dictated messages and original source quotations.
 - Recordings, transcripts, model weights, settings and QA output belong only in
@@ -15,12 +18,19 @@ repositories or change parent-workspace remotes.
   Sylloom’s waveform mark is independent of upstream branding.
 - A stopped meeting remains pending until named and given an explicit transcript
   decision. Closing, crashing or canceling must not choose an action for the user.
-- The dictation shortcut explicitly authorizes microphone capture, local
-  transcription, formatting and clipboard copy for that dictation. Never auto-paste
-  or send text. Audio is transcribed only after capture stops.
+- The dictation shortcut authorizes microphone capture, local transcription,
+  formatting and insertion into the editable input focused when capture stops.
+  Recheck focus and selection before insertion; otherwise copy to the clipboard.
+  Never press Enter or send text. History retries only copy, never insert.
+- Keep every dictation, including canceled, failed and interrupted captures.
+  Only an explicit delete action removes dictation audio or text.
+- Insights stay local. Sharing opens a reviewed X draft with aggregate counts only;
+  never include transcript text, app context or automatically publish a post.
+- Audio is transcribed only after capture stops.
 - Global shortcuts use macOS Carbon through Koffi. Do not log unrelated keys.
-- The floating indicator shows only a waveform. No labels, buttons, timer or
-  background surface; preserve keyboard focus and click-through behavior.
+- The floating dictation indicator shows only a waveform inside a compact bubble,
+  with the same liquid entry/exit as call popups. No labels, buttons or timer;
+  preserve keyboard focus and click-through behavior. Respect Reduce Motion.
 - Public source archives use the allowlist in scripts/release.ts. Never archive
   the entire workspace or include local state, binaries, model files or Git history.
 - The project license remains undecided. Do not add or imply an open-source grant.

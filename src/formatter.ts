@@ -31,6 +31,8 @@ export function needsDictationFormatting(raw: string, format: DictationFormat): 
 
 export async function formatDictation(raw: string, format: DictationFormat, config: Settings, signal?: AbortSignal, sharedServer?: ModelServer): Promise<string> {
     if (!raw.trim()) throw new Error("No speech detected. Clipboard preserved.");
+    signal?.throwIfAborted();
+    if (config.dictationPolish === 'off') return cleanText(raw).trim();
     if (raw.length > 12_000) throw new Error("Dictation is too long for the formatter. Original text saved; record shorter dictations.");
     const paragraphs = dictationParagraphs(raw);
     if (paragraphs.length > 24) throw new Error("Dictation has more than 24 paragraphs. Original text saved; record shorter dictations.");
@@ -38,7 +40,7 @@ export async function formatDictation(raw: string, format: DictationFormat, conf
     if (config.dictationPolish !== 'always' && !needsDictationFormatting(raw, format)) return paragraphs.join('\n\n');
     if (!existsSync(config.dictationModel)) throw new Error("Dictation formatter missing. Run \"sylloom models install formatter\". Original transcript preserved.");
     const server = sharedServer || new ModelServer(config.llmBinary, config.dictationModel, 'llama');
-    const cancel = () => { void server.stop(); };
+    const cancel = () => { void server.stop().catch(() => {}); };
     signal?.addEventListener('abort', cancel, { once: true });
     try {
         const url = await server.start();

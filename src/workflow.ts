@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { completeSession, saveSession, sessionDirectory, sessions } from './store.js';
+import { assertNoPendingSession, completeSession, saveSession, sessionDirectory, sessions } from './store.js';
 import { RATE, repairWav, sampleCount } from './wav.js';
 import { summarize } from './notes.js';
 import { IncompleteTranscriptionError, Transcription, transcriptText } from './transcription.js';
 import type { Decision, Session, Settings } from './types.js';
+import { errorMessage } from './types.js';
 
 export async function recoverSessions(): Promise<void> {
     for (const session of await sessions()) {
@@ -18,8 +19,12 @@ export async function recoverSessions(): Promise<void> {
         for (const source of ['mic', 'system']) {
             const file = path.join(sessionDirectory(session.id), source + '.wav');
             if (!existsSync(file)) continue;
-            repairWav(file);
-            samples = Math.max(samples, sampleCount(file));
+            try {
+                repairWav(file);
+                samples = Math.max(samples, sampleCount(file));
+            } catch (error) {
+                session.events.push({ at: new Date().toISOString(), message: source + ': Audio recovery failed. Original file preserved. ' + errorMessage(error) });
+            }
         }
         session.state = 'stopped'; session.recovered = true;
         session.stoppedAt = new Date(Date.parse(session.startedAt) + samples / RATE * 1000).toISOString();
@@ -30,8 +35,7 @@ export async function recoverSessions(): Promise<void> {
 
 export async function reopenSession(session: Session): Promise<void> {
     if (session.state !== 'done') throw new Error("This recording is still pending. Finish it first.");
-    const pending = (await sessions()).find(item => item.state !== 'done');
-    if (pending) throw new Error("Finish the pending recording first: " + (pending.name || pending.id));
+    await assertNoPendingSession();
     if (!['mic', 'system'].some(source => {
         const file = path.join(sessionDirectory(session.id), source + '.wav');
         return existsSync(file) && sampleCount(file) > 0;
@@ -43,19 +47,23 @@ export async function reopenSession(session: Session): Promise<void> {
 }
 
 export async function finishSession(session: Session, decision: Decision, config: Settings, progress: (text: string) => void, existing?: Transcription, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     if (!session.name || session.state !== 'stopped') throw new Error("Stop and name the recording first.");
     const root = sessionDirectory(session.id);
     if (decision === 'delete') {
         await existing?.close();
+        signal?.throwIfAborted();
         await completeSession(session, decision);
         return root;
     }
     const transcription = existing || new Transcription(session, config);
-    const cancel = () => { void transcription.close(); };
+    const cancel = () => { void transcription.close().catch(() => {}); };
+    const report = () => progress('Transcription: ' + (transcription.processing || 'Chunk saved'));
     signal?.addEventListener('abort', cancel, { once: true });
     try {
         if (!existing) await transcription.initialize();
-        const report = () => progress('Transcription: ' + (transcription.processing || 'Chunk saved'));
+        for (const warning of transcription.warnings) progress(warning);
+        signal?.throwIfAborted();
         transcription.on('update', report);
         progress("Transcribing recorded audio…");
         let failure: unknown;
@@ -80,5 +88,5 @@ export async function finishSession(session: Session, decision: Decision, config
         await transcription.close();
         await completeSession(session, decision);
         return result;
-    } finally { signal?.removeEventListener('abort', cancel); await transcription.close(); }
+    } finally { transcription.off('update', report); signal?.removeEventListener('abort', cancel); await transcription.close(); }
 }

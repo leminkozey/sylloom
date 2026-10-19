@@ -17,7 +17,7 @@ export class IncompleteTranscriptionError extends Error {}
 
 export function transcriptionProfile(config: Settings, revision = 0): string {
     const model = existsSync(config.whisperModel) ? statSync(config.whisperModel) : undefined;
-    return createHash('sha256').update(JSON.stringify({ version: 'offline-v2', model: config.whisperModel,
+    return createHash('sha256').update(JSON.stringify({ version: 'offline-v3', model: config.whisperModel,
         size: model?.size, modified: model?.mtimeMs, language: config.language, revision })).digest('hex');
 }
 
@@ -51,16 +51,6 @@ export function transcriptText(segments: Segment[]): string {
         .map(segment => '[' + timestamp(segment.start) + '] ' + (segment.source === 'mic' ? "Microphone" : "System audio") + ': ' + segment.text).join('\n\n');
 }
 
-export function removeOverlap(previous: string, current: string): string {
-    const before = previous.trim().split(/\s+/);
-    const after = current.trim().split(/\s+/);
-    const normalize = (word: string) => word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-    for (let count = Math.min(35, before.length, after.length); count >= 2; count--) {
-        if (before.slice(-count).map(normalize).join(' ') === after.slice(0, count).map(normalize).join(' ')) return after.slice(count).join(' ');
-    }
-    return current.trim();
-}
-
 export class Transcription extends EventEmitter {
     private server: ModelServer;
     private running?: Promise<void>;
@@ -71,6 +61,7 @@ export class Transcription extends EventEmitter {
     private profile = '';
     private ownsServer: boolean;
     jobs: Chunk[] = [];
+    warnings: string[] = [];
     processing = '';
     error = '';
     constructor(readonly session: Session, readonly config: Settings, private directory = sessionDirectory(session.id), sharedServer?: ModelServer) {
@@ -86,9 +77,12 @@ export class Transcription extends EventEmitter {
         if (this.session.state !== 'stopped') throw new Error("Transcription starts only after recording stops.");
         this.profile = transcriptionProfile(this.config, this.session.transcriptionRevision);
         this.jobs = [];
+        this.warnings = [];
         this.cursors = { mic: 0, system: 0 };
-        for (const job of await chunks(this.session.id, this.directory)) {
+        for (const job of await chunks(this.session.id, this.directory, this.warnings)) {
             if (job.profile !== this.profile || job.offset !== this.cursors[job.source]) continue;
+            const audio = path.join(this.directory, job.source + '.wav');
+            if (!existsSync(audio) || job.offset + job.samples > sampleCount(audio)) continue;
             this.jobs.push(job);
             this.cursors[job.source] += job.samples;
         }
@@ -144,14 +138,14 @@ export class Transcription extends EventEmitter {
             form.set('no_language_probabilities', 'true');
             form.set('temperature', '0.0');
             const response = await fetch(url + '/inference', { method: 'POST', body: form, redirect: 'error', signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(1_800_000)]) });
-            if (!response.ok) throw new Error('Whisper antwortet mit HTTP ' + response.status);
+            if (!response.ok) throw new Error('Whisper returned HTTP ' + response.status);
             const body = await response.json() as { text?: unknown; segments?: { start: number; end: number; text: string }[] };
-            const previous = this.jobs.filter(item => item.source === job.source && item.offset < job.offset).at(-1)?.segments.map(item => item.text).join(' ') || '';
-            job.segments = decodeSegments(body, job, start);
-            if (job.segments[0]) {
-                job.segments[0].text = removeOverlap(previous, job.segments[0].text);
-                job.segments = job.segments.filter(segment => segment.text);
+            if (!Array.isArray(body.segments) && (start !== job.offset || end !== job.offset + job.samples)) {
+                throw new Error('Whisper did not return segment timestamps for overlapping audio. Use a server with verbose_json support.');
             }
+            // Timestamp ownership in decodeSegments handles the shared audio context.
+            // Matching words alone cannot distinguish overlap from a real repetition.
+            job.segments = decodeSegments(body, job, start);
             job.state = 'done'; delete job.error;
             this.error = '';
         } catch (error) {

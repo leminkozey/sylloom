@@ -13,7 +13,6 @@ const { resolveDevice } = await import('../src/audio.js');
 const { localUrl } = await import('../src/server.js');
 const { fit } = await import('../src/terminal/screen.js');
 const { parseNote, renderNote, splitTranscript, validateEvidence, attachEvidence } = await import('../src/notes.js');
-const { removeOverlap } = await import('../src/transcription.js');
 const { recoverSessions } = await import('../src/workflow.js');
 
 test('WAV preserves gaps, recovers interrupted headers and exposes exact slices', async () => {
@@ -53,11 +52,9 @@ test('local model endpoints reject external addresses and embedded credentials',
     for (const value of ['https://example.com', 'http://example.com', 'http://127.0.0.1.example.com', 'http://user:secret@localhost:8080', 'file:///tmp/model']) assert.throws(() => localUrl(value));
 });
 
-test('Unicode cropping keeps terminal cells and overlap removal preserves new content', () => {
+test('Unicode cropping keeps terminal cells', () => {
     assert.equal(fit('A界B', 3), 'A…');
     assert.equal(fit('👩‍💻 test', 2), '…');
-    assert.equal(removeOverlap('Wir prüfen den Import morgen.', 'Import morgen. Sam prüft den Export.'), 'Sam prüft den Export.');
-    assert.equal(removeOverlap('Der Import startet.', 'Der Export bleibt pausiert.'), 'Der Export bleibt pausiert.');
 });
 
 test('structured notes reject malformed tasks and omit unknown owners without losing real actions', () => {
