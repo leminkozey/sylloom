@@ -7,8 +7,10 @@ import { cleanText } from '../types.js';
 import { onShutdown } from '../lifecycle.js';
 import { renderMarkdown, wrapText } from './markdown.js';
 import { name, version, mark } from '../brand.js';
+import renderList from './render-list.js';
 
-export type Choice = { value: string; name: string; hint?: string; toggle?: boolean };
+export type Choice = { value: string; name: string; hint?: string; toggle?: boolean; state?: string;
+    action?: boolean; group?: string; section?: string; unavailable?: string; requires?: string };
 type SelectionOptions = {
     detail?: string | (() => string);
     before?: () => string[];
@@ -17,6 +19,7 @@ type SelectionOptions = {
     shortcuts?: Record<string, string>;
     complete?: () => string | undefined;
     initialValue?: string;
+    activateWithSpace?: boolean;
 };
 
 export function fit(text: string, width: number): string {
@@ -28,10 +31,25 @@ export function fit(text: string, width: number): string {
     return result + '…';
 }
 
+export function editorLayout(letters: string[], width: number) {
+    const rows = ['']; const starts = [0]; const positions: { row: number; column: number }[] = [];
+    let column = 0;
+    for (let index = 0; index <= letters.length; index++) {
+        const letter = letters[index];
+        if (letter !== undefined && letter !== '\n' && column + stringWidth(letter) > width) { rows.push(''); starts.push(index); column = 0; }
+        positions.push({ row: rows.length - 1, column });
+        if (letter === undefined) break;
+        if (letter === '\n') { rows.push(''); starts.push(index + 1); column = 0; }
+        else { rows[rows.length - 1] += letter; column += stringWidth(letter); }
+    }
+    return { rows, starts, positions };
+}
+
 export class Screen {
     quitRequested = false;
     taskActive = false;
     recordingActive = false;
+    editingActive = false;
     dictation?: import('../dictation.js').DictationService;
     bridge?: import('../meeting-bridge.js').MeetingBridge;
     private keyHandler?: (text: string, key: Key) => void;
@@ -49,7 +67,7 @@ export class Screen {
         process.stdin.resume();
         process.stdin.on('keypress', this.onKey);
         process.stdout.on('resize', this.onResize);
-        process.stdout.write('\x1b[?1049h\x1b[?25l');
+        process.stdout.write('\x1b[?1049h\x1b[?25l\x1b[?2004h');
         this.unregister = onShutdown(() => this.close());
         this.timer = setInterval(() => this.redraw?.(), 200);
     }
@@ -102,30 +120,33 @@ export class Screen {
                 current = typeof choices === 'function' ? choices() : choices;
                 selected = Math.max(0, Math.min(selected, current.length - 1));
                 const before = options.before?.() || [];
-                const capacity = Math.max(1, this.capacity - before.length - 2);
-                const start = Math.max(0, Math.min(selected - capacity + 1, current.length - capacity));
-                const lines = [...before];
-                for (let index = start; index < Math.min(current.length, start + capacity); index++) {
-                    const choice = current[index]!;
-                    const prefix = selected === index ? '› ' : '  ';
-                    const width = Math.min(this.width, 64);
-                    const label = choice.toggle === undefined ? cleanText(choice.name) : fit(cleanText(choice.name), width - 11).padEnd(width - 9);
-                    const text = prefix + label;
-                    const state = choice.toggle === undefined ? '' : style(choice.toggle ? '● On' : '○ Off', choice.toggle ? 'OK' : 'muted');
-                    lines.push((selected === index ? style(text, 'accent') : text) + state);
-                }
-                lines.push('', style(current[selected]?.hint || '', 'muted'));
+                const choice = current[selected];
+                const blocked = choice?.requires ? current.find(row => row.value === choice.requires) : undefined;
+                const hint = choice?.unavailable || (choice?.requires && !blocked?.toggle ? 'Enable ' + (blocked?.name.toLowerCase() || choice.requires) + ' first.' : choice?.hint || '');
+                const actions = current.filter(row => row.action || ['save', 'back'].includes(row.value));
+                const rows = current.filter(row => !actions.includes(row));
+                const values = rows.some(row => row.toggle !== undefined || row.state !== undefined || row.unavailable);
+                const output = renderList({ rows: rows.map(row => ({ value: row.value,
+                    cells: [row.name, row.unavailable ? 'Unavailable' : row.state ?? (row.toggle === undefined ? '' : row.toggle ? 'On' : 'Off')], group: row.group, section: row.section })),
+                    columns: values ? [{ title: '' }, { title: '', width: Math.min(20, Math.max(12, Math.floor(this.width / 4))) }] : undefined,
+                    actions, selected: choice?.value || '', width: this.width, height: this.capacity - before.length, detail: hint });
+                const lines = [...before, ...output.trimEnd().split('\n').map(line => line.startsWith('  ') ? line.slice(2) : line)];
                 const detail = typeof options.detail === 'function' ? options.detail() : options.detail || '';
                 this.frame(title, detail, lines, options.footer);
             };
             this.keyHandler = (text, key) => {
                 if (key.ctrl && key.name === 'c') { this.quitRequested = true; done('quit'); return; }
                 if (key.name === 'escape' && options.back) { done('back'); return; }
+                if (this.width < 32 || (process.stdout.rows || 24) < 16) return;
                 if (key.name === 'f2') { done('settings'); return; }
                 if (key.name === 'up' || (key.ctrl && key.name === 'p')) selected = (selected - 1 + current.length) % Math.max(1, current.length);
                 else if (key.name === 'down' || (key.ctrl && key.name === 'n')) selected = (selected + 1) % Math.max(1, current.length);
-                else if (key.name === 'return' && current[selected]) { done(current[selected]!.value); return; }
-                else if (current[selected]?.toggle !== undefined && (text === ' ' || key.name === 'left' || key.name === 'right')) { done(current[selected]!.value); return; }
+                else if ((key.name === 'return' || key.name === 'enter' || options.activateWithSpace && (text === ' ' || key.name === 'space') || current[selected]?.toggle !== undefined && (text === ' ' || key.name === 'space' || key.name === 'left' || key.name === 'right')) && current[selected]) {
+                    const row = current[selected]!;
+                    if (row.unavailable || row.requires && !current.find(required => required.value === row.requires)?.toggle) { this.redraw?.(); return; }
+                    if (row.toggle !== undefined && (key.name === 'left' && !row.toggle || key.name === 'right' && row.toggle)) return;
+                    done(row.value); return;
+                }
                 else if (options.shortcuts?.[key.name || ''] || (text && options.shortcuts?.[text])) { done((options.shortcuts[key.name || ''] || options.shortcuts[text])!); return; }
                 this.redraw?.();
             };
@@ -133,22 +154,66 @@ export class Screen {
         });
     }
 
-    input(title: string, detail: string, initial = '', options: { secret?: boolean } = {}): Promise<string | null> {
+    input(title: string, detail: string, initial = '', options: { secret?: boolean; multiline?: boolean } = {}): Promise<string | null> {
         return new Promise(resolve => {
             const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
             let letters = [...segmenter.segment(initial)].map(item => item.segment);
             let cursor = letters.length;
-            const done = (value: string | null) => { this.redraw = undefined; this.keyHandler = undefined; resolve(value); };
+            let pasting = false, pasted = '', previousCR = false;
+            let verticalColumn: number | undefined;
+            if (options.multiline) this.editingActive = true;
+            const done = (value: string | null) => { this.editingActive = false; this.redraw = undefined; this.keyHandler = undefined; resolve(value); };
+            const insert = (text: string) => {
+                const value = options.multiline ? cleanText(text.replace(/\r\n?/g, '\n')) : cleanText(text).replace(/\s+/g, ' ');
+                const prefix = letters.slice(0, cursor).join('');
+                const parts = [...segmenter.segment(prefix + value + letters.slice(cursor).join(''))];
+                cursor = parts.filter(part => part.index < prefix.length + value.length).length;
+                letters = parts.map(part => part.segment); verticalColumn = undefined;
+            };
             this.redraw = () => {
+                if (options.multiline) {
+                    const { rows, starts, positions } = editorLayout(letters, Math.max(1, this.width - 3));
+                    const position = positions[cursor]!;
+                    const left = letters.slice(starts[position.row], cursor).join('');
+                    rows[position.row] = left + style('│', 'accent') + rows[position.row]!.slice(left.length);
+                    const start = Math.max(0, position.row - this.capacity + 2);
+                    this.frame(title, detail, rows.slice(start, start + this.capacity - 1), 'Ctrl+S Save · Enter New line · Esc Cancel · Arrows Move', 'Dictation paused while editing · Ctrl+C Quit without saving');
+                    return;
+                }
                 let left = options.secret ? '•'.repeat(cursor) : letters.slice(0, cursor).join('');
                 const right = options.secret ? '•'.repeat(letters.length - cursor) : letters.slice(cursor).join('');
                 while (stringWidth(left) > this.width - 5) left = [...segmenter.segment(left)].slice(1).map(item => item.segment).join('');
                 this.frame(title, detail, [style('› ', 'accent') + left + style('│', 'accent') + right], "Enter Save · Esc Cancel · ←/→ Cursor", "Ctrl+C Leave pending and quit");
             };
             this.keyHandler = (text, key) => {
+                if (key.name === 'paste-start') { pasting = true; pasted = ''; return; }
+                if (key.name === 'paste-end') { pasting = false; insert(pasted); pasted = ''; this.redraw?.(); return; }
+                if (pasting) { pasted += text || key.sequence || ''; return; }
                 if (key.ctrl && key.name === 'c') { this.quitRequested = true; done(null); return; }
                 if (key.name === 'escape') { done(null); return; }
-                if (key.name === 'return') { done(letters.join('')); return; }
+                if (options.multiline && key.ctrl && key.name === 's') { done(letters.join('')); return; }
+                const wasCR = previousCR; previousCR = key.name === 'return';
+                if (key.name === 'return' || key.name === 'enter') {
+                    if (options.multiline && key.name === 'enter' && wasCR) return;
+                    if (!options.multiline) { done(letters.join('')); return; }
+                    insert('\n'); this.redraw?.(); return;
+                }
+                if (options.multiline && (key.name === 'up' || key.name === 'down')) {
+                    const { positions, rows } = editorLayout(letters, Math.max(1, this.width - 3));
+                    const position = positions[cursor]!; verticalColumn ??= position.column;
+                    const row = Math.max(0, Math.min(rows.length - 1, position.row + (key.name === 'up' ? -1 : 1)));
+                    const choices = positions.map((point, index) => ({ ...point, index })).filter(point => point.row === row);
+                    cursor = choices.reduce((best, point) => Math.abs(point.column - verticalColumn!) < Math.abs(best.column - verticalColumn!) ? point : best).index;
+                    this.redraw?.(); return;
+                }
+                verticalColumn = undefined;
+                if (options.multiline && (key.name === 'home' || key.name === 'end')) {
+                    const { positions, starts } = editorLayout(letters, Math.max(1, this.width - 3));
+                    const row = positions[cursor]!.row;
+                    const end = starts[row + 1] ?? letters.length;
+                    cursor = key.name === 'home' ? starts[row]! : end > 0 && letters[end - 1] === '\n' ? end - 1 : end;
+                    this.redraw?.(); return;
+                }
                 if (key.name === 'left') cursor = Math.max(0, cursor - 1);
                 else if (key.name === 'right') cursor = Math.min(letters.length, cursor + 1);
                 else if (key.name === 'home' || (key.ctrl && key.name === 'a')) cursor = 0;
@@ -156,12 +221,7 @@ export class Screen {
                 else if (key.name === 'backspace' && cursor) { letters.splice(--cursor, 1); }
                 else if (key.name === 'delete') letters.splice(cursor, 1);
                 else if (!key.ctrl && !key.meta && text && !/^[\x00-\x1f\x7f]/.test(text)) {
-                    const inserted = cleanText(text).replace(/\s+/g, ' ');
-                    const prefix = letters.slice(0, cursor).join('');
-                    const value = prefix + inserted + letters.slice(cursor).join('');
-                    const segments = [...segmenter.segment(value)];
-                    cursor = segments.filter(item => item.index < prefix.length + inserted.length).length;
-                    letters = segments.map(item => item.segment);
+                    insert(text);
                 }
                 this.redraw?.();
             };
@@ -301,6 +361,6 @@ export class Screen {
         process.stdout.off('resize', this.onResize);
         process.stdin.setRawMode(false);
         process.stdin.pause();
-        process.stdout.write('\x1b[?25h\x1b[?1049l');
+        process.stdout.write('\x1b[?2004l\x1b[?25h\x1b[?1049l');
     }
 }

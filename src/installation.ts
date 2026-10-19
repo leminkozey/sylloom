@@ -4,11 +4,37 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { sourceFingerprint } from './build-info.js';
 
 const marker = '# Sylloom command launcher v1';
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 type InstallOptions = { binDirectory?: string; configurePath?: boolean; userHome?: string; project?: string; node?: string; environment?: NodeJS.ProcessEnv };
 export type CommandInstallation = { command: string; shellFiles: string[]; onPath: boolean };
+
+export async function installationStatus(root = fileURLToPath(new URL('../', import.meta.url)), environment = process.env) {
+    const source = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+    let build: { version: string; sourceHash: string; builtAt: string } | undefined;
+    try { build = JSON.parse(await readFile(path.join(root, 'dist', 'build-info.json'), 'utf8')); } catch { /* Old builds have no provenance file. */ }
+    const command = (environment.PATH || '').split(path.delimiter).map(directory => path.join(directory, 'sylloom')).find(file => existsSync(file));
+    let target: string | undefined;
+    if (command) {
+        if (lstatSync(command).isSymbolicLink()) target = path.resolve(path.dirname(command), await readlink(command));
+        else {
+            const launcher = await readFile(command, 'utf8');
+            if (launcher.startsWith('#!/bin/sh\n' + marker + '\n')) {
+                const match = launcher.match(/^exec "\$runtime" '(.*)' "\$@"$/m);
+                if (match) target = match[1]!.replaceAll("'\\''", "'");
+            }
+        }
+    }
+    const sourceHash = await sourceFingerprint(root);
+    return { sourceVersion: source.version as string, builtVersion: build?.version || 'Unknown (rebuild required)',
+        builtAt: build?.builtAt, buildMatchesSource: build?.version === source.version && build?.sourceHash === sourceHash,
+        sourceDirectory: path.resolve(root), runningEntrypoint: process.argv[1] ? path.resolve(process.argv[1]) : undefined,
+        command: command || 'Not found on PATH', launcherTarget: target || 'Unknown or foreign launcher',
+        launcherMatchesSource: target === path.join(path.resolve(root), 'sylloom'),
+        update: 'In sourceDirectory: git pull --ff-only, npm ci, npm run build, then ./sylloom install. Local data and models stay in place.' };
+}
 
 export async function installCommand(options: InstallOptions = {}): Promise<CommandInstallation> {
     const environment = options.environment || process.env;

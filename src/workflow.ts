@@ -1,11 +1,46 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { assertNoPendingSession, completeSession, saveSession, sessionDirectory, sessions } from './store.js';
-import { RATE, repairWav, sampleCount } from './wav.js';
+import { copyFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { assertNoPendingSession, completeSession, loadSession, saveSession, sessionDirectory, sessions } from './store.js';
+import { inspectWav, RATE, repairWav, sampleCount } from './wav.js';
 import { summarize } from './notes.js';
 import { IncompleteTranscriptionError, Transcription, transcriptText } from './transcription.js';
 import type { Decision, Session, Settings } from './types.js';
 import { errorMessage } from './types.js';
+
+export async function inspectRecordingRecovery(id: string): Promise<{ name: string; status: string; samples?: number }[]> {
+    const root = sessionDirectory(id);
+    return ['mic.wav', 'system.wav', 'note.md', 'transcript.md'].map(name => {
+        const file = path.join(root, name);
+        if (!existsSync(file)) return { name, status: 'Missing' };
+        if (!name.endsWith('.wav')) return { name, status: 'Preserved document' };
+        try { const samples = inspectWav(file); return { name, samples, status: samples > 0 ? (samples / RATE).toFixed(1) + ' s · Recoverable PCM audio' : 'Empty audio' }; }
+        catch { return { name, status: 'Damaged or unsupported audio · Preserved' }; }
+    });
+}
+
+export async function restoreRecordingMetadata(id: string): Promise<Session> {
+    let valid = false;
+    try { await loadSession(id); valid = true; } catch { /* Only unreadable metadata may be reconstructed. */ }
+    if (valid) throw new Error('This recording already has valid metadata. Use Finish pending recording or Library.');
+    const root = sessionDirectory(id), files = await inspectRecordingRecovery(id);
+    const samples = Math.max(0, ...files.map(file => file.samples || 0));
+    if (!samples) throw new Error('No recoverable audio found. Files were preserved; restore metadata from a backup instead.');
+    const metadata = path.join(root, 'session.json');
+    const info = await stat(root);
+    const startedAt = new Date(info.birthtimeMs > 0 ? info.birthtimeMs : info.mtimeMs).toISOString();
+    const backup = 'session.json.unreadable-' + randomUUID();
+    if (existsSync(metadata)) await copyFile(metadata, path.join(root, backup), constants.COPYFILE_EXCL);
+    const session: Session = { id, name: null, startedAt, stoppedAt: new Date(Date.parse(startedAt) + samples / RATE * 1000).toISOString(),
+        state: 'stopped', decision: null, recovered: true, events: [
+            { at: new Date().toISOString(), message: 'Metadata explicitly reconstructed. Name and time may differ from the original. Transcript decision remains pending. Original metadata backup: ' + backup },
+            ...files.map(file => ({ at: new Date().toISOString(), message: file.name + ': ' + file.status })),
+        ] };
+    await saveSession(session);
+    return session;
+}
 
 export async function recoverSessions(): Promise<void> {
     for (const session of await sessions()) {

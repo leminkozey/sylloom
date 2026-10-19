@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
-    "build": "tsc",
+    "build": "tsx scripts/build.ts",
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "verify:local": "tsx scripts/verify-local.ts",

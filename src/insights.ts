@@ -29,7 +29,7 @@ async function readUsage(): Promise<Usage[]> {
 }
 
 function usageFor(item: Dictation, directory: string): Usage | undefined {
-    const words = countWords(item.raw || item.text || '');
+    const words = countWords(item.raw || (item.editedAt ? '' : item.text) || '');
     if (!words) return undefined;
     return { id: item.id, at: item.stoppedAt || item.startedAt, words, seconds: recordingSeconds(directory, item) };
 }

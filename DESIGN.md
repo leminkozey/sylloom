@@ -15,6 +15,12 @@ it does not include Velora’s product mark, model engine, licensing or services
   `src/terminal/use-setup-screen.ts`.
 - Selection marker, active-row accent, descriptions and scrolling lists, following
   `src/terminal/render-list.ts` and `src/setup/select-option.ts`.
+- `src/terminal/render-list.ts` and `src/terminal/switch-list.ts`: adapted directly
+  from Velora's list renderer and switch-list component. They preserve its
+  two-column On/Off layout, dividers, dependency handling, pinned Save action,
+  scroll indicators and Enter/Space controls on Sylloom's existing event loop.
+  Value pickers mark the selected value; settings drafts survive submenus and
+  failed saves. Language and time settings offer presets plus custom values.
 
 Sylloom implements its own screen renderer for recording controls and asynchronous
 state updates. Terminal width calculations preserve grapheme clusters and display
@@ -69,14 +75,21 @@ project link enter the draft. Posting remains an explicit action in X.
 
 ## Planned quality-of-life improvements
 
-Recorded product ideas, deferred until the current recording, dictation and
-recovery paths are hardened. They are not implemented or scheduled for this pass.
-Wording, corrections, snippets and profiles must stay in private local data.
+Personal words, explicit correction rules and whole-dictation snippets are now
+implemented for dictation only. Settings uses a draft, a scrollable preview and
+explicit Save; the CLI exposes the same local rules. Whisper receives dictionary
+terms as a local prompt, while deterministic post-formatting replacements run
+once and protect words embedded in identifiers, addresses, paths and Markdown
+code. Matching a complete snippet bypasses the formatter and replacements.
+Rules never rewrite raw recognition or audio. Reformatting reuses the saved raw
+text; explicitly transcribing audio again may replace it after a successful run.
+Edited text retains prior versions; Insights always counts original speech.
+
+The next recorded ideas remain unimplemented. Wording, corrections, snippets
+and future profiles stay in private local data.
 
 | Priority | Improvement | Benefit and completion check |
 | --- | --- | --- |
-| 1 | Personal dictionary and explicit correction rules | Keep names and technical terms accurate; let the user save a recurring correction as a local rule. Preserve the original transcript and allow rules to be edited or removed. |
-| 1 | Spoken snippets | Expand a distinctive phrase such as "my signature" into text the user saved. Preserve paragraphs; never send a message or run commands. |
 | 2 | Per-app formatting profiles | Remember a user-selected style for mail, chat or an editor. Keep the global default as fallback and avoid reading unrelated app content. |
 | 2 | Audio playback at transcript timestamps | Select a source sentence and play its matching audio locally from the Library. A missing WAV must not prevent reading the note. |
 
@@ -92,6 +105,23 @@ Wispr Flow's [recovery workflow](https://docs.wisprflow.ai/articles/2503460374-R
 and [copy/paste recovery controls](https://docs.wisprflow.ai/articles/7971211038-fix-text-not-pasting-after-dictation)
 are interaction references. Sylloom keeps its offline processing and explicit
 deletion rules.
+
+## User-perspective review
+
+An independent review agent asked task-based questions before this feature pass.
+Answers were checked against the actual workflows; gaps were fixed before adding
+personal words and snippets.
+
+| User task | Result |
+| --- | --- |
+| Recover the exact latest dictation after failed insertion | Latest-result entry survives restart; copy-latest refuses an empty newest result or unreadable history instead of substituting older text. |
+| Correct a product name once or permanently | Separate multiline Edit and Teach correction actions. Raw/audio and previous successful text stay available. |
+| Insert a recurring paragraph by voice | Deliberate whole-dictation triggers, exact multiline content, full preview and explicit save. No expansion inside a normal sentence. |
+| Find yesterday's failed dictation | Library search plus Needs attention and date/state filters. Edit/copy is available; timestamp playback remains future work. |
+| Recover a meeting with damaged metadata | Inspect all tracks/documents, verify canonical PCM, back up metadata first and explicitly reconstruct a stopped pending recording. Never invent a transcript decision. |
+| Understand Save versus Esc | Device and call preferences are drafts; connections/credentials/model actions are separate and explicitly immediate. |
+| Understand call ownership and detector outages | Recording controls show the source call and explain that unavailable auto-stop leaves recording running until manual stop. |
+| Know which installed version runs | Read-only status separates source version, build version/fingerprint and launcher target. Updates remain explicit manual commands. |
 
 ## Local Outlook reminders and call bridge
 

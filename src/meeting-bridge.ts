@@ -23,7 +23,7 @@ export class MeetingBridge extends EventEmitter {
     private closeTask?: Promise<void>;
     private closed = false;
     private unregister = () => {};
-    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector };
+    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector; origin: string };
     private startingCapture = false;
     private captureStart?: Promise<string>;
     private stoppingCapture?: Promise<string | undefined>;
@@ -52,6 +52,15 @@ export class MeetingBridge extends EventEmitter {
     get call() { return this.detector?.snapshot || { state: 'unknown', source: 'none', message: 'Local bridge is disabled.', since: '', callId: 0, accessibility: false }; }
     get currentSession(): Session | undefined { return this.capture?.session; }
     get currentRecorder(): Recorder | undefined { return this.capture?.recorder; }
+    get captureStatus(): string[] {
+        const capture = this.capture;
+        if (!capture) return [];
+        const owner = capture.detector === this.detector && capture.callId ? this.detector?.stateFor(capture.callId) : undefined;
+        return ['Started from: ' + capture.origin,
+            !capture.callId || !this.config.callAutoStop ? 'Auto-stop Off. Stop this recording manually.' :
+                !owner || owner.state === 'unknown' ? 'Auto-stop unavailable, recording continues. Stop manually.' :
+                owner.state === 'idle' ? 'This call ended. Waiting for stable hangup before stopping.' : 'Auto-stop follows this call only. A new call cannot take over this recording.'];
+    }
     start(): Promise<void> { return this.starting ||= this.initialize(); }
     private async initialize(): Promise<void> {
         this.calendar = await cachedCalendar();
@@ -197,7 +206,8 @@ export class MeetingBridge extends EventEmitter {
             if (this.closed) throw new Error('The bridge is closing.');
             const session = await createSession();
             const recorder = this.options.recorder?.(session) || new Recorder(session, this.config);
-            this.capture = { session, recorder, detector: this.detector, callId: ['active', 'ringing'].includes(this.call.state) ? this.call.callId : undefined };
+            this.capture = { session, recorder, detector: this.detector, callId: ['active', 'ringing'].includes(this.call.state) ? this.call.callId : undefined,
+                origin: ['active', 'ringing'].includes(this.call.state) ? (this.call.app === 'apple' ? 'FaceTime / iPhone' : this.call.app === 'whatsapp' ? 'WhatsApp' : 'Teams') + ' · call ' + this.call.callId : 'Manual recording' };
             if (this.closed) throw new Error('The bridge is closing.');
             recorder.on('stopRequested', () => { void this.stopRecording().catch(error => { this.progress = errorMessage(error); }); });
             recorder.on('failure', error => { this.progress = errorMessage(error); void this.stopRecording().catch(() => {}); });

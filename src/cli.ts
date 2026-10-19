@@ -8,7 +8,7 @@ import { Audio } from './audio.js';
 import { Recorder } from './recorder.js';
 import { control, startControl } from './control.js';
 import { acquireLock, home, loadSession, nameSession, saveSettings, scanSessions, sessionDirectory, sessions, settings } from './store.js';
-import { finishSession, recoverSessions, reopenSession } from './workflow.js';
+import { finishSession, inspectRecordingRecovery, recoverSessions, reopenSession, restoreRecordingMetadata } from './workflow.js';
 import { documentPath, exportDocument, openDocument } from './documents.js';
 import type { DocumentKind, ExportFormat } from './documents.js';
 import { renderMarkdown } from './terminal/markdown.js';
@@ -25,7 +25,7 @@ import { loadLibrary, searchLibrary, librarySnippet } from './library.js';
 import { loadInsights } from './insights.js';
 import { renderInsights, saveInsightsView, openExternal } from './insights-ui.js';
 import { accessibilityStatus } from './insertion.js';
-import { installCommand } from './installation.js';
+import { installCommand, installationStatus } from './installation.js';
 import { version } from './brand.js';
 import { MeetingBridge } from './meeting-bridge.js';
 import { readLocalCalendar, calendarRange } from './calendar.js';
@@ -33,6 +33,7 @@ import { storageOverview } from './storage.js';
 import { CallDetector, enabledCallApps } from './calls.js';
 import { previewPopups } from './popup-preview.js';
 import { previewIndicator } from './indicator-preview.js';
+import { addCorrection, addSnippet, addWord, applyTextRules, loadSpeechRules, matchSnippet, removeSpeechRule, saveSpeechRules, toggleSpeechRule } from './speech-rules.js';
 
 async function locked(work: () => Promise<void>): Promise<void> {
     const release = await acquireLock();
@@ -138,6 +139,48 @@ program.command('dictate').description("Dictate from any app, format locally and
 
 program.command('recovery').description('Show local storage, pending captures and model readiness')
     .action(async () => { process.stdout.write((await storageOverview(await settings())).join('\n') + '\n'); });
+
+program.command('repair-recording <id>').description('Inspect unreadable meeting metadata; restore only on explicit request')
+    .option('--restore-metadata', 'Back up unreadable metadata and reconstruct a stopped recording with its decision pending')
+    .action(async (id, options) => {
+        if (!options.restoreMetadata) { process.stdout.write(JSON.stringify(await inspectRecordingRecovery(id), null, 2) + '\n'); return; }
+        await locked(async () => { await restoreRecordingMetadata(id); process.stdout.write('Metadata restored as pending. Name the recording and choose what to keep: sylloom finish ' + id + '\n'); });
+    });
+
+program.command('status').description('Show source version, built version and the actual global launcher target')
+    .option('--json', 'Output installation details as JSON')
+    .action(async options => {
+        const status = await installationStatus();
+        if (options.json) process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+        else process.stdout.write(['Source version: ' + status.sourceVersion, 'Built CLI version: ' + status.builtVersion,
+            'Build matches source: ' + (status.buildMatchesSource ? 'Yes' : 'No · Run npm run build in the source directory'),
+            'Source directory: ' + status.sourceDirectory, 'Global command: ' + status.command, 'Launcher target: ' + status.launcherTarget,
+            'Launcher matches this source: ' + (status.launcherMatchesSource ? 'Yes' : 'No · Run ./sylloom install from the intended checkout'), '', status.update].join('\n') + '\n');
+    });
+
+const rulesCommand = program.command('rules').description('Manage local dictionary, correction rules and whole-dictation snippets');
+rulesCommand.command('list').description('Show saved rules').action(async () => { process.stdout.write(JSON.stringify(await loadSpeechRules(), null, 2) + '\n'); });
+rulesCommand.command('word <term>').description('Add a preferred spelling for future dictation')
+    .action(term => locked(async () => { await saveSpeechRules(addWord(await loadSpeechRules(), term)); process.stdout.write('Dictionary word saved. Existing dictations are unchanged.\n'); }));
+rulesCommand.command('correct <heard> <replacement>').description('Add an explicit whole-word correction')
+    .action((heard, replacement) => locked(async () => { await saveSpeechRules(addCorrection(await loadSpeechRules(), heard, replacement)); process.stdout.write('Correction saved for future dictation and explicit retries.\n'); }));
+rulesCommand.command('snippet <trigger>').description('Add an exact whole-dictation snippet')
+    .option('--text <text>', 'Literal snippet content').option('--file <file>', 'Read multiline snippet content from a UTF-8 file')
+    .action((trigger, options) => locked(async () => {
+        if ((options.text === undefined) === (options.file === undefined)) throw new Error('Choose exactly one of --text or --file.');
+        const text = options.file ? await readFile(path.resolve(options.file), 'utf8') : options.text;
+        await saveSpeechRules(addSnippet(await loadSpeechRules(), trigger, text)); process.stdout.write('Snippet saved. Say the entire trigger by itself: ' + trigger + '\n');
+    }));
+for (const operation of ['remove', 'toggle'] as const) rulesCommand.command(operation + ' <id>').description(operation === 'remove' ? 'Remove one saved word or rule' : 'Switch one saved word or rule On / Off')
+    .action(id => locked(async () => {
+        const rules = await loadSpeechRules();
+        if (![...rules.words, ...rules.corrections, ...rules.snippets].some(entry => entry.id === id)) throw new Error('Rule not found. Run sylloom rules list.');
+        await saveSpeechRules(operation === 'remove' ? removeSpeechRule(rules, id) : toggleSpeechRule(rules, id)); process.stdout.write('Rule ' + (operation === 'remove' ? 'removed' : 'toggled') + '.\n');
+    }));
+for (const operation of ['enable', 'disable'] as const) rulesCommand.command(operation).description('Switch all personal words and snippets ' + (operation === 'enable' ? 'On' : 'Off'))
+    .action(() => locked(async () => { await saveSpeechRules({ ...await loadSpeechRules(), enabled: operation === 'enable' }); }));
+rulesCommand.command('preview <text>').description('Preview rules without audio capture or a model')
+    .action(async text => { const rules = await loadSpeechRules(), snippet = matchSnippet(text, rules); process.stdout.write(JSON.stringify({ before: text, after: snippet?.text ?? applyTextRules(text, rules), snippet: snippet?.trigger || null }, null, 2) + '\n'); });
 
 program.command('preview-popups').description('Preview native popup animations without recording audio')
     .action(async () => {

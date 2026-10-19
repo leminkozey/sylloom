@@ -112,6 +112,53 @@ Read, rename, pin, reformat, copy or explicitly delete it from the Library.
 Canceling a reformat preserves its previous saved version. Closing the CLI stops
 capture, retains interrupted audio and unregisters the shortcuts.
 
+### Personal words, corrections and snippets
+
+Open **Settings → Words and snippets**. Add preferred spellings for names or
+technical terms, explicit correction rules, or reusable spoken snippets. Every
+entry has a full preview. **Use in draft** stages it; **Save changes** applies the
+draft, and Esc discards it. Entries and the whole feature can be switched Off.
+Everything stays in `speech-rules.json` in your local data directory.
+
+Dictionary terms hint local recognition and preferred spelling; recognition can
+still make mistakes. Corrections replace whole words once after formatting.
+For example, `Silloom → Sylloom` leaves larger words, URLs, email addresses,
+paths and Markdown code unchanged. Replacements do not trigger another rule.
+Duplicate normalized triggers are rejected. Dictionary hints use the local
+[Whisper server prompt parameter](https://github.com/ggml-org/whisper.cpp/tree/master/examples/server#request-examples).
+
+For a snippet, use a deliberate phrase such as **Textbaustein Signatur** and
+enter the exact text, including paragraphs. Say that phrase by itself. A trailing
+period is fine; a phrase inside a longer sentence does not expand. Snippets skip
+the formatter and correction rules so their text stays exact. Activity counts
+the spoken trigger, not all expanded words. Formatting Off skips only the model;
+personal rules remain active until disabled separately.
+
+Existing history and meeting transcripts are never changed automatically. In a
+dictation's menu, **Edit formatted text** changes only that result. The multiline
+editor supports paste, visual-line navigation, Enter for a line break and
+**Ctrl+S** to save. Esc cancels. Failed saves retain the draft; original recognition,
+audio and previous formatted versions stay available. Editing does not copy or
+insert text and does not add spoken words to Insights. **Teach a correction for
+future dictation** is a separate, explicit action. Reformat a saved result only
+when you want to apply current rules to it.
+
+```sh
+sylloom rules word 'Sylloom'
+sylloom rules correct 'Silloom' 'Sylloom'
+sylloom rules snippet 'Textbaustein Signatur' --file signature.txt
+sylloom rules preview 'Textbaustein Signatur.'
+sylloom rules list
+sylloom rules toggle RULE_ID
+sylloom rules remove RULE_ID
+sylloom rules disable
+```
+
+Rule-changing commands require the main CLI to be closed; use Settings to edit
+rules while it runs. List and preview commands are read-only. An unreadable rules
+file is preserved. If it cannot be loaded during dictation, Sylloom keeps the raw
+transcript and uses its existing recovery path instead of applying unknown rules.
+
 Automatic insertion is enabled by default. Allow **Accessibility** access for your
 terminal under **System Settings → Privacy & Security → Accessibility**. Sylloom
 captures the editable field and selection when you stop recording. Before inserting,
@@ -144,9 +191,13 @@ terminating the CLI or replacing the ledger.
 
 **Settings** is grouped into Dictation, Global shortcuts, Recording and audio,
 Outlook meeting reminders, Call recording prompts, Models and performance, Permissions,
-and Storage and recovery. Boolean switches show **On / Off**. Use Enter or Space
-to change them, **Save changes** to apply, or Esc to discard the draft. Call
-detection and app switches apply immediately.
+and Storage and recovery. Switches use Velora's two-column **On / Off** list, with
+Save and Discard pinned below the scrolling rows. Value pickers mark the current
+selection; language and timing preferences offer presets and custom values. Use Enter or Space
+to change them, **Save changes** to apply, or Esc to discard the draft, including
+device choices and call-detection switches. Local calendar connections and Teams
+credentials have separate actions within their categories: completing one of those explicit actions
+applies immediately. Model actions also apply immediately and are labeled accordingly.
 
 **Outlook meeting reminders** reads an explicitly connected local source and
 shows a compact popup before a Teams meeting, five minutes ahead by default.
@@ -154,7 +205,7 @@ Change the lead time from 1–60 minutes or switch reminders Off in Settings.
 There is no calendar screen or browser workspace. A reminder never records audio;
 Open Teams is available only for a recognized Teams link and requires a click.
 
-Connect through **Settings → Outlook meeting reminders → Connect local Outlook**.
+Connect through **Settings → Outlook meeting reminders → Local calendar connections**.
 Source status reports partial or unavailable coverage. New Outlook can expose an
 empty legacy scripting profile even while its current account has appointments.
 When this is detected, Sylloom reports the connection as unavailable instead of
@@ -189,7 +240,10 @@ enabling in its Privacy settings, or an administrator may disable it. A token is
 stored only in macOS Keychain. Naming and the transcript decision always remain
 in the CLI. Details: [local bridge](DESIGN.md#local-outlook-reminders-and-call-bridge).
 
-**Ctrl+Option+C** copies the latest saved dictation from any app. Library has
+**Ctrl+Option+C** copies the latest saved dictation from any app. If that newest
+dictation has no text, it explicitly leaves the clipboard unchanged; it never
+silently substitutes an older message. Dictation's latest-result entry remains
+available after restart, including failed and canceled recordings. Library has
 date/state filters under **Ctrl+F**, separate reformat/retranscribe actions and
 recognition/formatting/total timings. Failed retries preserve the previous result.
 **Storage and recovery** shows local usage and pending items; `sylloom recovery`
@@ -201,12 +255,24 @@ and preserves the original file while recovering its healthy tracks. The CLI can
 still open; naming and the transcript decision remain pending.
 Unreadable meeting metadata is listed with its preserved path. Dictation and
 settings remain available; new meetings and reprocessing wait for metadata repair
-so an unresolved transcript decision cannot be bypassed. Restore `session.json`
-from a backup using **Storage and recovery** to inspect the affected folder.
+so an unresolved transcript decision cannot be bypassed. **Storage and recovery →
+Recover unreadable recording** shows every track and document before offering an
+explicit metadata restore. Usable canonical PCM audio is required. The original
+metadata is backed up before replacement; audio and existing notes/transcripts
+are preserved. Name and time may be reconstructed; the recording stays pending
+until you name it and choose what to keep. No restart is needed. Without usable
+audio, inspect the folder and restore metadata from your own backup instead.
 Invalid transcription checkpoints move to `chunks/rejected/` and are rebuilt from
 saved audio on retry. Original checkpoint bytes and audio stay preserved.
 The controller uses a kernel lock that releases on exit or a crash; an old
 shutdown callback cannot unlock a new controller.
+
+`sylloom status` distinguishes the source version, built CLI version, build
+freshness and actual launcher target. `--json` gives the same details for scripts.
+To update, enter the shown source directory, run `git pull --ff-only`, `npm ci`,
+`npm run build`, then `./sylloom install`. If Git reports local changes, resolve
+them first; do not discard them to update. Local data and model files stay in place.
+Moving a checkout requires reinstalling its launcher from the new location.
 
 **Insights** shows total spoken words, dictation count, weighted WPM, current and
 longest streak, today's activity and a GitHub-style daily grid. Local calendar

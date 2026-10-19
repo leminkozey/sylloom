@@ -13,7 +13,8 @@ import { registerHotkeys, DICTATION_SHORTCUT } from './hotkey.js';
 import { onShutdown } from './lifecycle.js';
 import { repairWav, sampleCount, RATE } from './wav.js';
 import { attachIndicator } from './indicator.js';
-import { errorMessage } from './types.js';
+import { cleanText, errorMessage } from './types.js';
+import { applyTextRules, dictionaryPrompt, emptySpeechRules, loadSpeechRules, matchSnippet } from './speech-rules.js';
 import { captureInput, deliverText } from './insertion.js';
 import type { CapturedInput, Delivery } from './insertion.js';
 import { recordUsage } from './insights.js';
@@ -21,6 +22,7 @@ import { loadLibrary } from './library.js';
 import type { DictationFormat, Session, Settings } from './types.js';
 
 export type Dictation = Session & { format: DictationFormat; raw?: string; text?: string; copiedAt?: string; error?: string;
+    editedAt?: string; edits?: { at: string; text: string }[];
     outcome?: 'completed' | 'failed' | 'canceled' | 'interrupted'; delivery?: Delivery;
     timings?: { transcriptionMs: number; formattingMs: number; totalMs: number; usedFormatter: boolean } };
 export function dictationDirectory(id: string): string {
@@ -154,6 +156,8 @@ export class DictationService extends EventEmitter {
     private async process(item: Dictation, signal: AbortSignal, directory = dictationDirectory(item.id), persist = save): Promise<void> {
         const start = performance.now();
         let transcriptionMs = 0;
+        let rules = emptySpeechRules(); let rulesFailure: unknown;
+        try { rules = await loadSpeechRules(); } catch (error) { rulesFailure = error; }
         signal.throwIfAborted();
         if (item.state === 'recording' || item.state === 'paused') {
             const file = path.join(directory, 'mic.wav');
@@ -164,7 +168,7 @@ export class DictationService extends EventEmitter {
         if (!item.raw) {
             const config = dictationConfig(this.config);
             const server = await this.models.get('whisper', this.config);
-            const transcription = new Transcription(item, config, directory, server);
+            const transcription = new Transcription(item, config, directory, server, dictionaryPrompt(rules));
             const cancel = () => { void transcription.close().catch(() => {}); };
             signal.addEventListener('abort', cancel, { once: true });
             try {
@@ -178,12 +182,16 @@ export class DictationService extends EventEmitter {
             transcriptionMs = Math.round(performance.now() - start);
         }
         signal.throwIfAborted();
+        if (rulesFailure) throw rulesFailure;
         this.update('processing', "Formatting dictation locally…");
         const formattingStart = performance.now();
-        const usedFormatter = this.config.dictationPolish !== 'off' && (this.config.dictationPolish === 'always' || needsDictationFormatting(item.raw, item.format));
+        const snippet = matchSnippet(item.raw, rules);
+        const usedFormatter = !snippet && this.config.dictationPolish !== 'off' && (this.config.dictationPolish === 'always' || needsDictationFormatting(item.raw, item.format));
         const server = usedFormatter ? await this.models.get('formatter', this.config, item.raw.length > 6000 ? 16384 : 8192) : undefined;
         signal.throwIfAborted();
-        const text = await formatDictation(item.raw, item.format, this.config, signal, server);
+        const words = rules.enabled ? rules.words.filter(word => word.enabled).map(word => word.text) : [];
+        const text = snippet ? snippet.text : applyTextRules(await formatDictation(item.raw, item.format, this.config, signal, server, words), rules);
+        if (snippet) item.events.push({ at: new Date().toISOString(), message: 'Explicit whole-dictation snippet expanded: ' + snippet.trigger });
         const formattingMs = Math.round(performance.now() - formattingStart);
         signal.throwIfAborted();
         item.text = text; item.state = 'done'; item.outcome = 'completed'; delete item.error;
@@ -245,10 +253,13 @@ export class DictationService extends EventEmitter {
     }
     async copyLatest(): Promise<void> {
         if (this.busy) { notify('Finish the active dictation before copying saved text.'); return; }
-        const latest = (await loadLibrary()).items.find(item => item.kind === 'dictation' && ((item.data as Dictation).text || (item.data as Dictation).raw));
+        const library = await loadLibrary();
         if (this.busy || this.closing) return;
-        if (!latest) { notify('No saved dictation text yet.'); return; }
+        if (library.warnings.some(warning => warning.includes('dictation'))) { this.update('error', 'Some dictations are unreadable. Choose a result in Library; clipboard unchanged.', true); return; }
+        const latest = library.items.find(item => item.kind === 'dictation');
+        if (!latest) { this.update('error', 'No saved dictation yet. Clipboard unchanged.', true); return; }
         const item = latest.data as Dictation;
+        if (!item.text && !item.raw) { this.update('error', 'Latest dictation has no text. Open Library → Needs attention. Clipboard unchanged.', true); return; }
         await this.copy(item, !item.text);
     }
     async copy(item: Dictation, raw = false): Promise<void> {
@@ -256,6 +267,23 @@ export class DictationService extends EventEmitter {
         await copyText((raw ? item.raw : item.text) || '');
         item.copiedAt = new Date().toISOString(); await save(item);
         if (!this.busy && !this.closing) this.update('ready', "Copied · Paste with Cmd+V", true);
+    }
+    async edit(item: Dictation, text: string): Promise<void> {
+        if (this.busy || this.blocked() || this.closing) throw new Error('Finish the active recording or processing task first.');
+        const value = cleanText(text.replace(/\r\n?/g, '\n'));
+        if (!value.trim() || value.length > 50000) throw new Error('Enter text from 1 to 50000 characters.');
+        const current = JSON.parse(await readFile(path.join(dictationDirectory(item.id), 'session.json'), 'utf8')) as Dictation;
+        if (current.id !== item.id) throw new Error('Dictation metadata does not match this item.');
+        if (current.text === value) return;
+        const at = new Date().toISOString();
+        const next: Dictation = { ...current, text: value, state: 'done', outcome: 'completed', editedAt: at,
+            edits: [...(current.edits || []), ...(current.text ? [{ at, text: current.text }] : [])],
+            events: [...current.events, { at, message: 'Formatted text edited explicitly. Original recognition and audio preserved; nothing inserted or copied.' }] };
+        delete next.error; delete next.delivery; delete next.copiedAt;
+        await save(next); Object.assign(item, next);
+        delete item.error; delete item.delivery; delete item.copiedAt;
+        if (this.current?.id === item.id) this.current = next;
+        this.update('ready', 'Edited text saved · Original preserved · Copy when ready');
     }
     async remove(item: Dictation): Promise<void> {
         if (this.busy && item.id === this.current?.id) throw new Error("Cancel the active dictation first.");

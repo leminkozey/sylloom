@@ -48,9 +48,7 @@ export class WavWriter {
     }
 }
 
-export function repairWav(file: string): void {
-    const fd = openSync(file, 'r+');
-    try {
+function pcmBytes(fd: number, file: string): number {
         const bytes = fstatSync(fd).size - HEADER;
         if (bytes < 0 || bytes % 2) throw new Error("Invalid audio file: " + file);
         // Only the size fields of our own PCM header may be repaired. Never turn
@@ -58,7 +56,18 @@ export function repairWav(file: string): void {
         const header = Buffer.alloc(HEADER), expected = wavHeader(0);
         if (readSync(fd, header, 0, HEADER, 0) !== HEADER || !header.subarray(0, 4).equals(expected.subarray(0, 4)) ||
             !header.subarray(8, 40).equals(expected.subarray(8, 40))) throw new Error("Unsupported or damaged WAV audio file: " + file);
-        writeSync(fd, wavHeader(bytes), 0, HEADER, 0);
+        return bytes;
+}
+
+export function inspectWav(file: string): number {
+    const fd = openSync(file, 'r');
+    try { return pcmBytes(fd, file) / 2; } finally { closeSync(fd); }
+}
+
+export function repairWav(file: string): void {
+    const fd = openSync(file, 'r+');
+    try {
+        writeSync(fd, wavHeader(pcmBytes(fd, file)), 0, HEADER, 0);
     } finally { closeSync(fd); }
 }
 

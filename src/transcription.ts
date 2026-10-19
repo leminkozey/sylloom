@@ -15,10 +15,10 @@ const OVERLAP = RATE * 8;
 
 export class IncompleteTranscriptionError extends Error {}
 
-export function transcriptionProfile(config: Settings, revision = 0): string {
+export function transcriptionProfile(config: Settings, revision = 0, prompt = ''): string {
     const model = existsSync(config.whisperModel) ? statSync(config.whisperModel) : undefined;
     return createHash('sha256').update(JSON.stringify({ version: 'offline-v3', model: config.whisperModel,
-        size: model?.size, modified: model?.mtimeMs, language: config.language, revision })).digest('hex');
+        size: model?.size, modified: model?.mtimeMs, language: config.language, revision, ...(prompt ? { prompt } : {}) })).digest('hex');
 }
 
 export function decodeSegments(body: { text?: unknown; segments?: { start: number; end: number; text: string }[] }, job: Chunk, sliceStart: number): Segment[] {
@@ -64,7 +64,7 @@ export class Transcription extends EventEmitter {
     warnings: string[] = [];
     processing = '';
     error = '';
-    constructor(readonly session: Session, readonly config: Settings, private directory = sessionDirectory(session.id), sharedServer?: ModelServer) {
+    constructor(readonly session: Session, readonly config: Settings, private directory = sessionDirectory(session.id), sharedServer?: ModelServer, private prompt = '') {
         super();
         this.server = sharedServer || new ModelServer(config.whisperBinary, config.whisperModel, 'whisper');
         this.ownsServer = !sharedServer;
@@ -75,7 +75,7 @@ export class Transcription extends EventEmitter {
 
     async initialize(): Promise<void> {
         if (this.session.state !== 'stopped') throw new Error("Transcription starts only after recording stops.");
-        this.profile = transcriptionProfile(this.config, this.session.transcriptionRevision);
+        this.profile = transcriptionProfile(this.config, this.session.transcriptionRevision, this.prompt);
         this.jobs = [];
         this.warnings = [];
         this.cursors = { mic: 0, system: 0 };
@@ -137,6 +137,7 @@ export class Transcription extends EventEmitter {
             form.set('token_timestamps', 'false');
             form.set('no_language_probabilities', 'true');
             form.set('temperature', '0.0');
+            if (this.prompt) form.set('prompt', this.prompt);
             const response = await fetch(url + '/inference', { method: 'POST', body: form, redirect: 'error', signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(1_800_000)]) });
             if (!response.ok) throw new Error('Whisper returned HTTP ' + response.status);
             const body = await response.json() as { text?: unknown; segments?: { start: number; end: number; text: string }[] };

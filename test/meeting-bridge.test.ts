@@ -204,7 +204,7 @@ test('terminal switches preserve selection and respond to Space, while secret fi
     const screen = Object.create(Screen.prototype); let output = '';
     screen.frame = (_title: string, _detail: string, lines: string[]) => { output = lines.join('\n'); };
     const selected = screen.select('Settings', [{ value: 'a', name: 'First', toggle: false }, { value: 'b', name: 'Second', toggle: true }], { initialValue: 'b' });
-    assert.match(output, /○ Off/); assert.match(output, /● On/);
+    assert.match(output, /First[^\n]*│ Off/); assert.match(output, /Second[^\n]*│ On/);
     screen.keyHandler(' ', { name: 'space' }); assert.equal(await selected, 'b');
     const input = screen.input('Token', 'Hidden input', '', { secret: true });
     screen.keyHandler('fixture-secret', {}); assert.ok(!output.includes('fixture-secret')); assert.match(output, /•/);

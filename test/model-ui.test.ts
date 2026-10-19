@@ -18,7 +18,7 @@ test('model setup groups four purposes and changes only the selected role', asyn
         select: async (_title: string, choices: Choice[]) => {
             if (!menus++) {
                 assert.deepEqual(choices.map(item => item.value), ['dictation-whisper', 'formatter', 'whisper', 'llama', 'back']);
-                assert.ok(choices.slice(0, 4).every(item => item.name.includes('Setup needed')));
+                assert.ok(choices.slice(0, 4).every(item => item.state === 'Setup needed'));
             }
             return steps.shift()!;
         }, input: async () => model, notice: async () => assert.fail('Unexpected setup error'),

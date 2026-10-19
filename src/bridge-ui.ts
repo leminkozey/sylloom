@@ -4,36 +4,46 @@ import { stat } from 'node:fs/promises';
 import { home, saveSettings, scanSessions, sessionDirectory } from './store.js';
 import { cachedCalendar } from './calendar.js';
 import { storageOverview } from './storage.js';
-import { teamsToken } from './native/keychain.js';
 import { errorMessage } from './types.js';
 import { openExternal } from './insights-ui.js';
+import { inspectRecordingRecovery, restoreRecordingMetadata } from './workflow.js';
+import switchList from './terminal/switch-list.js';
 import type { Settings } from './types.js';
 import type { Screen } from './terminal/screen.js';
 
 export async function bridgeMenu(screen: Screen, config: Settings): Promise<void> {
+    const draft = { ...config };
+    const keys = ['bridgeEnabled', 'detectAppleCalls', 'detectWhatsAppCalls', 'detectTeamsCalls', 'teamsPort'] as const;
     let selected = 'toggle';
     while (!screen.quitRequested) {
-        selected = await screen.select('Settings / Call recording prompts', [
-            { value: 'toggle', name: 'Call detection and recording prompt', toggle: config.bridgeEnabled, hint: 'Local app controls, audio activity and Teams device API. Applies immediately.' },
-            { value: 'detectAppleCalls', name: 'FaceTime and iPhone calls', toggle: config.detectAppleCalls, hint: 'Calls that reach this Mac. Detects the Apple call interface and active audio streams.' },
-            { value: 'detectWhatsAppCalls', name: 'WhatsApp calls', toggle: config.detectWhatsAppCalls, hint: 'Native Mac app. Incoming controls and active audio streams; live verification required.' },
-            { value: 'detectTeamsCalls', name: 'Teams calls', toggle: config.detectTeamsCalls, hint: 'Local Teams API and app controls.' },
-            { value: 'token', name: 'Save local Teams API token…', hint: 'Teams → Settings → Privacy → Third-party app API. Stored in macOS Keychain.' },
-            { value: 'port', name: 'Local API port · ' + config.teamsPort }, { value: 'back', name: 'Back' },
-        ], { back: true, initialValue: selected, detail: screen.bridge?.call.message || 'Local call detection runs with the CLI.' });
-        if (['back', 'quit', 'settings'].includes(selected)) return;
+        const result = await switchList(screen, 'Settings / Call recording prompts', { initialValue: selected,
+            rows: [{ value: 'toggle', name: 'Call detection and recording prompt', enabled: draft.bridgeEnabled, hint: 'Applies only after Save changes. Esc leaves current call detection unchanged.' },
+                { value: 'detectAppleCalls', name: 'FaceTime and iPhone calls', enabled: draft.detectAppleCalls, hint: 'Calls that reach this Mac. Incoming call controls and active audio streams.' },
+                { value: 'detectWhatsAppCalls', name: 'WhatsApp calls', enabled: draft.detectWhatsAppCalls, hint: 'Native Mac app. Incoming controls and active audio streams; live verification required.' },
+                { value: 'detectTeamsCalls', name: 'Teams calls', enabled: draft.detectTeamsCalls, hint: 'Local Teams API and app controls.' }],
+            extra: [{ value: 'port', name: 'Local API port', state: String(draft.teamsPort), hint: 'Choose the port used by the local Teams API.' },
+                { value: 'token', name: 'Teams API credential…', state: 'Keychain', hint: 'Explicit credential saving applies immediately. Unsaved call preferences stay in this draft.' }],
+        });
+        if (!result) return;
+        for (const row of result.rows) {
+            if (row.value === 'toggle') draft.bridgeEnabled = row.enabled === true;
+            if (row.value === 'detectAppleCalls' || row.value === 'detectWhatsAppCalls' || row.value === 'detectTeamsCalls') draft[row.value] = row.enabled === true;
+        }
+        selected = result.action;
         try {
-            if (selected === 'toggle') await screen.bridge?.setBridge(!config.bridgeEnabled);
-            if (selected === 'detectAppleCalls' || selected === 'detectWhatsAppCalls' || selected === 'detectTeamsCalls') {
-                config[selected] = !config[selected]; await saveSettings(config); await screen.bridge?.setBridge(config.bridgeEnabled);
-            }
             if (selected === 'token') {
-                const value = await screen.input('Local Teams API token', 'Paste the token from Teams settings. Input is hidden.', '', { secret: true });
-                if (value?.trim()) { teamsToken(value.trim()); await screen.bridge?.setBridge(config.bridgeEnabled); }
+                const value = await screen.input('Save local Teams API token', 'Writes to macOS Keychain when you press Enter. Esc cancels.', '', { secret: true });
+                if (value?.trim()) { const { teamsToken } = await import('./native/keychain.js'); teamsToken(value.trim()); await screen.bridge?.setBridge(config.bridgeEnabled); }
             }
             if (selected === 'port') {
-                const value = await screen.input('Local API port', '1024–65535. Default: 8124', String(config.teamsPort));
-                if (value !== null) { const port = Number(value); if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Enter a valid port.'); config.teamsPort = port; await saveSettings(config); await screen.bridge?.setBridge(config.bridgeEnabled); }
+                const value = await screen.input('Local API port', '1024–65535. Default: 8124', String(draft.teamsPort));
+                if (value !== null) { const port = Number(value); if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Enter a valid port.'); draft.teamsPort = port; }
+            }
+            if (selected === 'save') {
+                if (screen.dictation?.busy || screen.bridge?.recording) throw new Error('Stop recording or dictation before applying call preferences.');
+                const changed = Object.fromEntries(keys.map(key => [key, draft[key]]));
+                await saveSettings({ ...config, ...changed }); Object.assign(config, changed);
+                await screen.bridge?.setBridge(config.bridgeEnabled); return;
             }
         } catch (error) { await screen.notice('Call recording prompts', errorMessage(error)); }
     }
@@ -50,7 +60,7 @@ export async function outlookSourcesMenu(screen: Screen, config: Settings): Prom
             { value: 'system', name: 'Use an existing macOS calendar…', hint: 'Optional fallback. macOS asks for read access; no account is added.' },
             { value: 'file', name: 'Use a local .ics file…', hint: config.calendarFile || 'Optional fallback if the installed Outlook mode does not expose events.' },
             { value: 'back', name: 'Back' },
-        ], { back: true, initialValue: selected, detail: 'Only Teams meetings trigger reminders. Source coverage is shown below.', before: () => (snapshot?.statuses || []).map(status => status.source + ' · ' + status.state + ' · ' + status.message).concat('') });
+        ], { back: true, initialValue: selected, detail: 'Connection actions apply immediately. Esc returns without undoing a completed connection.', before: () => (snapshot?.statuses || []).map(status => status.source + ' · ' + status.state + ' · ' + status.message).concat('') });
         if (['back', 'quit', 'settings'].includes(selected)) return;
         try {
             if (selected === 'outlook' || selected === 'disconnect') { config.calendarOutlook = selected === 'outlook'; await saveSettings(config); screen.bridge?.configureCalendar(); }
@@ -75,7 +85,8 @@ export async function recordingControls(screen: Screen): Promise<void> {
         const action = await screen.select('Recording meeting', [{ value: 'stop', name: 'Stop recording' }, { value: 'pause', name: bridge.currentSession?.state === 'paused' ? 'Resume' : 'Pause' },
             { value: 'mic', name: 'Microphone muted', toggle: recorder?.muted.mic || false }, { value: 'system', name: 'System audio muted', toggle: recorder?.muted.system || false },
             { value: 'back', name: 'Back · keep recording' }],
-            { back: true, detail: () => bridge.progress, complete: () => bridge.recording ? undefined : 'back' });
+            { back: true, detail: () => bridge.progress, before: () => [...bridge.captureStatus,
+                'Microphone: ' + (recorder?.health.mic || 'Starting'), 'System audio: ' + (recorder?.health.system || 'Starting'), ''], complete: () => bridge.recording ? undefined : 'back' });
         if (['back', 'quit', 'settings'].includes(action)) return;
         if (action === 'pause') await recorder?.pause();
         if (action === 'mic' || action === 'system') await recorder?.toggleMute(action);
@@ -89,14 +100,22 @@ export async function recoveryMenu(screen: Screen, config: Settings): Promise<vo
         selected = await screen.select('Storage and recovery', [
             { value: 'overview', name: 'Storage, recovery and model status' },
             { value: 'folder', name: 'Open local data folder', hint: 'Inspect saved audio, documents and settings in Finder.' },
-            ...issues.map(issue => ({ value: issue.id, name: 'Inspect unreadable recording · ' + issue.id, hint: 'Opens its preserved folder. Repair session.json from a backup; no files are changed.' })),
+            ...issues.map(issue => ({ value: issue.id, name: 'Recover unreadable recording · ' + issue.id, hint: 'Inspect saved tracks and explicitly reconstruct pending metadata. Original files are preserved.' })),
             { value: 'back', name: 'Back' },
         ], { back: true, initialValue: selected, detail: issues.length ? issues.length + ' unreadable recording(s). Dictation remains available.' : 'Files stay saved until you explicitly delete an item.' });
         if (['back', 'quit', 'settings'].includes(selected)) return;
         try {
             if (selected === 'overview') { const lines = await storageOverview(config); await screen.view('Storage and recovery', () => lines.join('\n')); }
             else if (selected === 'folder') await openExternal(home);
-            else if (issues.some(issue => issue.id === selected)) await openExternal(sessionDirectory(selected));
+            else if (issues.some(issue => issue.id === selected)) {
+                const files = await inspectRecordingRecovery(selected);
+                const action = await screen.select('Recover recording metadata', [
+                    ...(files.some(file => (file.samples || 0) > 0) ? [{ value: 'restore', name: 'Restore as pending recording', hint: 'Back up the original metadata first. You must name it and explicitly choose what to keep.' }] : []),
+                    { value: 'folder', name: 'Inspect preserved folder in Finder' }, { value: 'back', name: 'Back' },
+                ], { back: true, detail: 'Name/time may be reconstructed. Existing notes, transcripts and audio stay preserved.', before: () => files.map(file => file.name + ' · ' + file.status).concat('') });
+                if (action === 'folder') await openExternal(sessionDirectory(selected));
+                if (action === 'restore') { await restoreRecordingMetadata(selected); await screen.notice('Pending recording restored', 'Return to Finish pending recording to name it and choose what to keep. No restart is needed.'); }
+            }
         } catch (error) { await screen.notice('Recovery', errorMessage(error)); }
     }
 }

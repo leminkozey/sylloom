@@ -25,36 +25,42 @@ const label = (section: Section, config: Settings) => {
 };
 
 export async function modelMenu(screen: Screen, config: Settings): Promise<void> {
+    let current = 'dictation-whisper';
     while (!screen.quitRequested) {
         const selected = await screen.select('Local models', [...sections.map(section => ({
-            value: section.kind, name: section.title + ' · ' + status(section, config),
+            value: section.kind, name: section.title, state: status(section, config),
             hint: label(section, config) + ' · ' + section.purpose,
-        })), back], { back: true, detail: 'Choose what you want to use. Manage its model on the next screen.' });
+        })), back], { back: true, initialValue: current, detail: 'Model actions apply immediately. Returning does not undo a completed install or selection.' });
         const section = sections.find(section => section.kind === selected);
         if (!section || screen.quitRequested) return;
+        current = selected;
         await sectionMenu(screen, config, section);
     }
 }
 
 async function sectionMenu(screen: Screen, config: Settings, section: Section): Promise<void> {
+    let selected: string | undefined;
     while (!screen.quitRequested) {
         const usingOllama = section.kind === 'llama' && config.llm === 'ollama';
         const bundled = path.join(modelDirectory, models[section.kind].file);
         const current = selectedFile(section, config);
         const items: Choice[] = usingOllama ? [
-            { value: 'ollama-model', name: 'Ollama model: ' + config.ollamaModel, hint: 'Choose a model already installed in your local Ollama.' },
+            { value: 'ollama-model', name: 'Ollama model', state: config.ollamaModel, hint: 'Choose a model already installed in your local Ollama.' },
         ] : [
             { value: 'recommended', name: existsSync(bundled) ? 'Use recommended model' : 'Install recommended model · ' + section.size,
+                state: current === bundled && existsSync(bundled) ? 'Selected' : '',
                 hint: models[section.kind].label + (current === bundled && existsSync(bundled) ? ' · Selected' : '') },
             { value: 'custom', name: 'Choose a custom model file…', hint: 'Select an existing compatible model on this Mac.' },
         ];
-        if (section.kind === 'llama') items.push({ value: 'backend', name: 'Backend: ' + (usingOllama ? 'Ollama' : 'llama.cpp'), hint: 'Switch the local backend for meeting notes.' });
+        if (section.kind === 'llama') items.push({ value: 'backend', name: 'Backend', state: usingOllama ? 'Ollama' : 'llama.cpp', hint: 'Switch the local backend for meeting notes.' });
         items.push(back);
         const action = await screen.select(section.title, items, { back: true,
+            initialValue: selected || (usingOllama ? 'ollama-model' : current === bundled ? 'recommended' : 'custom'),
             detail: status(section, config) + ' · ' + (usingOllama ? config.ollamaModel : path.basename(current)),
             before: () => [section.purpose, ''],
         });
         if (['back', 'quit', 'settings'].includes(action) || screen.quitRequested) return;
+        selected = action;
         try {
             if (action === 'recommended') {
                 const target = existsSync(bundled) ? bundled : await screen.task('Installing ' + models[section.kind].label, (update, signal) =>

@@ -27,25 +27,26 @@ import { copyText, notify } from './clipboard.js';
 const back = { value: 'back', name: "Back" };
 const choices = (values: [string, string, string?][]): Choice[] => values.map(([value, name, hint]) => ({ value, name, hint }));
 
-export async function deviceMenu(screen: Screen, config: Settings, source: Source, recorder?: Recorder): Promise<void> {
+export async function deviceMenu(screen: Screen, config: Settings, source: Source, recorder?: Recorder, persist = true): Promise<void> {
     const audio = recorder?.audio || new Audio();
     try {
         for (;;) {
             const devices = await screen.task("Audio devices", () => audio.devices());
             const current = source === 'mic' ? config.input : config.output;
-            const list: Choice[] = [{ value: 'default', name: (current === 'default' ? '✓ ' : '') + "Follow system default", hint: "Follow the default device, including changes during recording." }];
+            const list: Choice[] = [{ value: 'default', name: 'Follow system default', state: current === 'default' ? 'Selected' : '', hint: "Follow the default device, including changes during recording." }];
             for (const device of devices.filter(device => device.sourceKind === source && device.formatAvailable)) {
-                list.push({ value: device.id, name: (current === device.id ? '✓ ' : '') + device.name + (device.isDefault ? " · Default" : ''), hint: device.id });
+                list.push({ value: device.id, name: device.name, state: current === device.id ? 'Selected' : device.isDefault ? 'System default' : '', hint: device.id });
             }
+            if (current !== 'default' && !list.some(choice => choice.value === current)) list.push({ value: current, name: 'Preferred device disconnected', unavailable: 'Choose another device or follow the system default. Esc keeps the current preference.' });
             list.push({ value: 'refresh', name: "Refresh devices" }, back);
             const selected = await screen.select(source === 'mic' ? "Choose microphone" : "Choose system audio", list, {
-                detail: recorder ? "Switch devices while recording" : source === 'mic' ? "Microphone for your voice" : "Output device to capture", back: true,
+                detail: recorder ? "Switch devices while recording" : source === 'mic' ? "Microphone for your voice" : "Output device to capture", back: true, initialValue: current,
             });
             if (['back', 'quit', 'settings'].includes(selected)) return;
             if (selected === 'refresh') continue;
             if (recorder) await screen.task("Switch audio device", () => recorder.switch(source, selected));
             if (source === 'mic') config.input = selected; else config.output = selected;
-            await saveSettings(config);
+            if (persist) await saveSettings(config);
             return;
         }
     } finally { if (!recorder) await audio.close(); }
@@ -54,7 +55,7 @@ export async function deviceMenu(screen: Screen, config: Settings, source: Sourc
 export { modelMenu };
 
 export async function settingsMenu(screen: Screen, config: Settings): Promise<void> {
-    await manageSettings(screen, config, source => deviceMenu(screen, config, source));
+    await manageSettings(screen, config, (source, draft = config) => deviceMenu(screen, draft, source, undefined, false));
 }
 
 export async function finishFlow(screen: Screen, session: Session, config: Settings, transcription?: Transcription): Promise<boolean> {
@@ -227,6 +228,7 @@ async function captureFlow(screen: Screen, config: Settings): Promise<boolean> {
 export async function mainMenu(config: Settings): Promise<void> {
     const ui = createInterface(config);
     const { screen } = ui;
+    let selectedMenu = 'record';
     try {
         for (;;) {
             if (screen.quitRequested) return;
@@ -246,7 +248,8 @@ export async function mainMenu(config: Settings): Promise<void> {
                 ['insights', 'Insights', 'Daily activity, streaks, spoken words and WPM.'],
                 ['recovery', 'Storage and recovery', 'Saved audio, interrupted captures, models and available space.'],
                 ['settings', "Settings"], ['models', "Local models"], ['quit', "Quit"],
-            ]), { detail: (existsSync(config.whisperModel) ? "Transcription model ready" : "Set up Whisper first") + " · Process after recording", shortcuts: { f8: 'dictation-toggle' }, complete: () => ui.bridge.revision !== revision ? 'refresh' : undefined });
+            ]), { initialValue: selectedMenu, detail: (existsSync(config.whisperModel) ? "Transcription model ready" : "Set up Whisper first") + " · Process after recording", shortcuts: { f8: 'dictation-toggle' }, complete: () => ui.bridge.revision !== revision ? 'refresh' : undefined });
+            if (!['refresh', 'dictation-toggle'].includes(selected)) selectedMenu = selected;
             try {
                 if (selected === 'quit') return;
                 if (selected === 'dictation') await dictationMenu(screen);
