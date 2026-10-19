@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-labelledby="title description">
+  <title id="title">Sylloom</title>
+  <desc id="description">Seven vertical bars form a voice waveform.</desc>
+  <rect width="112" height="112" rx="22" fill="#171719"/>
+  <g fill="#888bf0">
+    <rect x="18" y="78" width="7" height="10" rx="2"/>
+    <rect x="29" y="32" width="7" height="56" rx="2"/>
+    <rect x="40" y="55" width="7" height="33" rx="2"/>
+    <rect x="51" y="13" width="10" height="75" rx="2"/>
+    <rect x="65" y="55" width="7" height="33" rx="2"/>
+    <rect x="76" y="32" width="7" height="56" rx="2"/>
+    <rect x="87" y="78" width="7" height="10" rx="2"/>
+  </g>
+</svg>

@@ -1,0 +1,50 @@
+{
+  "name": "sylloom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local dictation, audio recording and structured meeting notes for macOS.",
+  "bin": {
+    "sylloom": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "verify:local": "tsx scripts/verify-local.ts",
+    "verify:dictation": "tsx scripts/verify-dictation.ts",
+    "benchmark:dictation": "tsx scripts/benchmark-dictation.ts",
+    "release:check": "tsx scripts/release.ts --check",
+    "release:prepare": "tsx scripts/release.ts"
+  },
+  "dependencies": {
+    "@studio-sadola/flexaudio": "0.7.0",
+    "commander": "15.0.0",
+    "koffi": "^3.3.3",
+    "marked": "^18.1.1",
+    "sanitize-html": "^2.18.1",
+    "slice-ansi": "8.0.0",
+    "string-width": "8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/sanitize-html": "^2.16.2",
+    "@types/slice-ansi": "^5.0.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "UNLICENSED",
+  "files": [
+    "dist/",
+    "sylloom",
+    "install.sh",
+    "assets/",
+    "README.md",
+    "DESIGN.md",
+    "NOTICE.md"
+  ]
+}

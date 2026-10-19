@@ -1,0 +1,15 @@
+data/
+node_modules/
+dist/
+*.log
+release/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.wav
+*.aiff
+*.mp3
+*.m4a
+*.gguf
+*.bin
