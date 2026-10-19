@@ -1,4 +1,5 @@
 import koffi from 'koffi';
+import { initializeAppKit } from './native/app-kit.js';
 
 export const DICTATION_SHORTCUT = 'Ctrl+Option+Space';
 export const COPY_SHORTCUT = 'Ctrl+Option+C';
@@ -7,10 +8,8 @@ export const COPY_SHORTCUT = 'Ctrl+Option+C';
 // All calls stay on Node's main thread, as required by HIToolbox.
 export function registerHotkeys(toggle: () => void, cancel: () => void, copy?: () => void): () => void {
     if (process.platform !== 'darwin') throw new Error("Global shortcuts currently require macOS.");
+    initializeAppKit();
     const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');
-    const psn = koffi.struct({ highLongOfPSN: 'uint32', lowLongOfPSN: 'uint32' });
-    const transform = carbon.func('TransformProcessType', 'int32', [koffi.pointer(psn), 'uint32']);
-    if (transform({ highLongOfPSN: 0, lowLongOfPSN: 2 }, 4) !== 0) throw new Error("macOS could not register the shortcut process.");
     const type = koffi.struct({ eventClass: 'uint32', eventKind: 'uint32' });
     const idType = koffi.struct({ signature: 'uint32', id: 'uint32' });
     const target = carbon.func('void *GetApplicationEventTarget()')();

@@ -108,3 +108,28 @@ test('disabled apps cannot create calls through either observation or Teams API'
         calls.observe(apple(true, true, true)); assert.deepEqual(calls.snapshot, snapshot);
     } finally { await calls.close(); }
 });
+
+test('Teams ringing recognizes native action identifiers and only attributes banners to their actual app', async () => {
+    const { notificationCall, notificationCallApp } = await import('../src/native/app-reader.js');
+    assert.equal(callControls(['acceptAudioCallButton', 'declineCallButton'], 'teams', false), 'ringing');
+    assert.equal(callControls(['Anruf_annehmen', 'Anruf_ablehnen'], 'teams', false), 'ringing');
+    assert.equal(notificationCallApp('com.microsoft.teams2.notificationcenter'), 'teams');
+    assert.equal(notificationCallApp('', 'Microsoft Teams'), 'teams');
+    assert.equal(notificationCallApp('', 'A message about Microsoft Teams'), undefined);
+    assert.equal(notificationCallApp('com.microsoft.teams2evil'), undefined);
+    assert.equal(notificationCall(['Answer audio call'], 'teams'), 'ringing');
+    assert.equal(notificationCall(['Answer'], undefined), 'unknown');
+    assert.equal(notificationCall(['Accept invitation', 'Decline invitation'], 'teams'), 'unknown');
+    assert.equal(notificationCall(['Call back', 'Close'], 'teams'), 'unknown');
+    const calls = new CallDetector(); calls.enabledApps = ['teams'];
+    try {
+        calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting: false } } }));
+        calls.observe({ trusted: true, teams: 'ringing', calls: { teams: 'ringing' }, audio: { supported: true, apps: { teams: { input: false, output: true } } } });
+        const id = calls.snapshot.callId;
+        assert.equal(calls.snapshot.state, 'ringing');
+        calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting: false } } }));
+        assert.equal(calls.snapshot.state, 'ringing', 'An idle API packet cannot erase the incoming banner');
+        calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting: true } } }));
+        assert.equal(calls.snapshot.state, 'active'); assert.equal(calls.snapshot.callId, id);
+    } finally { await calls.close(); }
+});

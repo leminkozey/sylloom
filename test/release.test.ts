@@ -11,8 +11,8 @@ test('public source selection excludes local state, models and workspace history
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-public-test-'));
     try {
         for (const directory of ['src', 'data/recordings', 'node_modules', '.git', 'release']) await mkdir(path.join(root, directory), { recursive: true });
-        for (const file of ['README.md', 'src/cli.ts', 'data/recordings/transcript.md', 'node_modules/private.txt', '.git/config', 'release/old.tar.gz']) await writeFile(path.join(root, file), 'fixture');
-        assert.deepEqual(await publicFiles(root), ['README.md', 'src/cli.ts']);
+        for (const file of ['LICENSE', 'README.md', 'src/cli.ts', 'data/recordings/transcript.md', 'node_modules/private.txt', '.git/config', 'release/old.tar.gz']) await writeFile(path.join(root, file), 'fixture');
+        assert.deepEqual(await publicFiles(root), ['LICENSE', 'README.md', 'src/cli.ts']);
         await checkPublicFiles(root, await publicFiles(root));
         await symlink(path.join(root, 'data/recordings/transcript.md'), path.join(root, 'src/leak.ts'));
         await assert.rejects(publicFiles(root), /symlink/);
@@ -26,6 +26,23 @@ test('public source scan rejects private paths and credential-like values', asyn
             await writeFile(path.join(root, 'README.md'), content);
             await assert.rejects(checkPublicFiles(root, ['README.md']), /Release check found/);
         }
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('website assets have an explicit binary allowlist and page source still gets privacy checks', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-site-release-'));
+    try {
+        await mkdir(path.join(root, 'website/assets/fonts'), { recursive: true });
+        await writeFile(path.join(root, 'website/assets/ocean.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+        await writeFile(path.join(root, 'website/assets/fonts/instrument-sans.ttf'), Buffer.from([0, 1, 0, 0]));
+        await writeFile(path.join(root, 'website/index.html'), '<h1>Sylloom</h1>');
+        await checkPublicFiles(root, await publicFiles(root));
+        await writeFile(path.join(root, 'website/assets/ocean.jpg'), 'Unexpected replacement');
+        await assert.rejects(checkPublicFiles(root, ['website/assets/ocean.jpg']), /Invalid website asset/);
+        await writeFile(path.join(root, 'website/assets/private.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+        await assert.rejects(publicFiles(root), /Unexpected website asset/);
+        await writeFile(path.join(root, 'website/index.html'), path.join('/', 'Users', 'fixture-account', 'recording.wav'));
+        await assert.rejects(checkPublicFiles(root, ['website/index.html']), /Release check found/);
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 

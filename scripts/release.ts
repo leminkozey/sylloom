@@ -7,8 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const roots = ['src', 'test', 'scripts', 'assets', '.github'];
-const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', 'install.sh', 'sylloom'];
+const roots = ['src', 'test', 'scripts', 'assets', 'website', '.github'];
+const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'LICENSE', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', 'install.sh', 'sylloom'];
+const websiteBinary = /^website\/assets\/(?:(?:ocean|call-water|footer-water)\.jpg|fonts\/instrument-(?:sans|serif-italic)\.ttf)$/;
 
 export async function publicFiles(root: string): Promise<string[]> {
     const result: string[] = [];
@@ -23,8 +24,9 @@ export async function publicFiles(root: string): Promise<string[]> {
             }
         } else if (info.isFile()) {
             const directory = relative.split(path.sep)[0]!;
-            const extensions: Record<string, RegExp> = { src: /\.ts$/, test: /\.test\.ts$/, scripts: /\.ts$/, assets: /\.svg$/, '.github': /\.ya?ml$/ };
+            const extensions: Record<string, RegExp> = { src: /\.ts$/, test: /\.test\.ts$/, scripts: /\.ts$/, assets: /\.svg$/, website: /\.(?:html|css|ts|svg|jpg|ttf|txt)$/, '.github': /\.ya?ml$/ };
             if (extensions[directory] && !extensions[directory]!.test(relative)) throw new Error('Unexpected release file type: ' + relative);
+            if (/\.(?:jpg|ttf)$/.test(relative) && !websiteBinary.test(relative)) throw new Error('Unexpected website asset: ' + relative);
             result.push(relative);
         }
         else throw new Error('Unexpected release entry: ' + relative);
@@ -46,7 +48,14 @@ export async function checkPublicFiles(root: string, selected: string[]): Promis
     ];
     for (const relative of selected) {
         if (/\.(?:wav|aiff|mp3|m4a|gguf|bin|log)$/i.test(relative)) throw new Error('Private or binary data in release: ' + relative);
-        const content = await readFile(path.join(root, relative), 'utf8');
+        const buffer = await readFile(path.join(root, relative));
+        if (websiteBinary.test(relative)) {
+            const validImage = relative.endsWith('.jpg') && buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+            const validFont = relative.endsWith('.ttf') && buffer.subarray(0, 4).equals(Buffer.from([0, 1, 0, 0]));
+            if (!validImage && !validFont) throw new Error('Invalid website asset: ' + relative);
+            continue;
+        }
+        const content = buffer.toString('utf8');
         for (const [label, pattern] of rules) if (pattern.test(content)) throw new Error('Release check found ' + label + ' in ' + relative);
         for (const identity of identities) {
             const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

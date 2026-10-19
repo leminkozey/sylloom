@@ -5,6 +5,11 @@
 Local dictation, meeting recording and structured notes from your terminal.
 Built with TypeScript for macOS on Apple Silicon. No Python runtime or cloud API.
 
+> Sylloom started as a one-day project to solve my own need for local dictation
+> and meeting notes. I'm sharing it in case it helps someone else. I may leave
+> it unmaintained at any time; ongoing support and updates aren't guaranteed.
+> Feel free to use it, change it or fork it.
+
 - **Dictate from any app.** Press Ctrl+Option+Space, speak, then press it again. Text is inserted into the focused input, or copied for Cmd+V.
 - **Record meetings.** Capture microphone and system audio separately, with device switching, pause and mute controls.
 - **Choose what to keep.** Name each meeting and explicitly choose whether to keep a transcript, generate a note or delete the text.
@@ -87,7 +92,8 @@ Keep the CLI running, even when another app is in the foreground.
 
 A compact waveform bubble appears at the bottom center of your display while
 dictation is active. It opens from a droplet and contracts back down when finished,
-matching the call popup animation. The waveform follows the actual microphone
+matching the call popup animation. The waveform eases between samples and settles smoothly during silence.
+The same trace is used by the website demo. The waveform follows the actual microphone
 level, turns gray during processing and briefly green after delivery. The bubble
 contains no labels, buttons or timer, takes no keyboard focus and passes clicks
 through. Reduce Motion replaces the liquid transition with a short fade.
@@ -220,7 +226,10 @@ stream activity, with the local Teams device API as an additional source. This
 observation reads activity flags, not audio samples. Audio activity can detect an
 answered call; detecting the ringing stage depends on the app's exposed controls.
 An audio-only signal is labeled **Audio session detected**, since other duplex
-audio sessions are possible. Native WhatsApp and Teams still need live verification.
+audio sessions are possible. Teams post-answer detection has been confirmed by a
+user test. Ringing detection also observes its native notification helper and
+app-attributed system banners; that new path still needs a real incoming-call
+test. Notification bodies are skipped. Native WhatsApp still needs live verification.
 An iPhone call relayed to the Mac has passed a post-answer popup/active/hangup
 test. The popup did not appear during ringing in that test. An additional Apple
 notification-button adapter is now included for that stage, but has not yet been
@@ -452,6 +461,15 @@ Dictation formatting is limited to 12,000 characters and 24 paragraphs.
 
 ## Development and release preparation
 
+The product page lives in `website/`. Run `npm run site` for a local preview at
+`http://127.0.0.1:4173`, or `npm run site:build` for static files in `dist/site/`.
+Set `SYLLOOM_SITE_PORT` to use another port. The app scenes use fictional examples; they do not open the microphone or load
+personal recordings. Fonts and the ocean photographs are self-hosted. The terminal excerpt uses the
+actual Markdown renderer with fictional content. Terminal
+images are intentionally omitted until real Ghostty captures are supplied.
+The build performs no deployment. See `website/credits.html` for image, font and
+interface provenance.
+
 ```sh
 npm ci
 npm run check
@@ -486,8 +504,9 @@ intentional: they exercise Unicode and verify that dictation preserves its langu
 Never add real recordings, device exports, model weights, `.env` files or local QA
 results to a public source tree. See [AGENTS.md](AGENTS.md) for repository rules.
 
-## License status
+## License
 
-A project license has not been selected. The package is marked `UNLICENSED` and
-private to prevent accidental npm publication. Public source availability does
-not change upstream license terms. See [NOTICE.md](NOTICE.md).
+Sylloom is available under the [MIT License](LICENSE). You can use, modify and
+redistribute it, including commercially, as long as you keep the copyright and
+license notice. Dependencies, downloaded models, fonts and photographs retain
+their own terms. See [NOTICE.md](NOTICE.md) and [website credits](website/credits.html).

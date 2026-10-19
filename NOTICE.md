@@ -1,5 +1,11 @@
 # Attribution and third-party notices
 
+## Sylloom
+
+Sylloom is distributed under the [MIT License](LICENSE). The license covers the
+Sylloom source code and the interface adaptations included in this repository.
+Third-party dependencies and assets retain their own terms, listed below.
+
 ## Velora CLI
 
 The terminal layout, interaction patterns and color handling are adapted from
@@ -8,10 +14,8 @@ The terminal layout, interaction patterns and color handling are adapted from
 screen renderer is implemented in Sylloom; its design references are documented
 in [DESIGN.md](DESIGN.md). Velora’s original mark is not included.
 
-No license file was present in the upstream checkout inspected during preparation.
-No license grant is inferred or added on its behalf. Sylloom’s project license
-remains undecided; the package is marked `UNLICENSED`. Resolve the licensing of
-adapted code before offering the project under an open-source license.
+This repository's MIT license does not change the license of the upstream
+Velora project or include its product mark, model engine or services.
 
 ## Runtime dependencies
 
@@ -41,3 +45,9 @@ Model weights are downloaded separately, never bundled in the public source arch
 Consult each model repository for its current license, base-model terms and model
 card. Download metadata records the selected upstream revision and SHA-256 beside
 the local file. Sylloom does not train these models or send recordings to their authors.
+
+## Website assets
+
+Ocean photographs use the Unsplash License. Instrument Sans and Instrument Serif
+use the SIL Open Font License. See [website credits](website/credits.html) for
+sources and the bundled font license notices.

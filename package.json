@@ -13,6 +13,8 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "build": "tsx scripts/build.ts",
+    "site": "tsx scripts/site.ts",
+    "site:build": "tsx scripts/site.ts build",
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "verify:local": "tsx scripts/verify-local.ts",
@@ -38,12 +40,13 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "files": [
     "dist/",
     "sylloom",
     "install.sh",
     "assets/",
+    "LICENSE",
     "README.md",
     "DESIGN.md",
     "NOTICE.md"

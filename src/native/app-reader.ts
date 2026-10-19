@@ -1,4 +1,6 @@
 import koffi from 'koffi';
+import { isMainThread } from 'node:worker_threads';
+import { initializeAppKit } from './app-kit.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { audioActivity } from './audio-activity.js';
@@ -8,8 +10,8 @@ export type ObservedCallState = 'ringing' | 'active' | 'idle' | 'unknown';
 export type CallApp = 'teams' | 'apple' | 'whatsapp';
 export type AppObservation = { trusted: boolean; teams: ObservedCallState; calls?: Partial<Record<CallApp, ObservedCallState>>; audio?: AudioActivity; appleCallUI?: boolean; outlook?: { title: string; date: string } };
 export function callControls(labels: string[], app: CallApp, complete: boolean): ObservedCallState {
-    const has = (pattern: RegExp) => labels.some(label => pattern.test(label));
-    if (has(/\b(accept|answer|annehmen)\b/i) && has(/\b(decline|reject|ablehnen)\b/i)) return 'ringing';
+    const has = (pattern: RegExp) => labels.some(label => pattern.test(controlLabel(label)));
+    if (!has(/\b(invitation|invite|einladung)\b/i) && has(/\b(accept|answer|annehmen)\b/i) && has(/\b(decline|reject|ablehnen)\b/i)) return 'ringing';
     if (has(/\b(hang.?up|end.?call|leave|verlassen|auflegen|anruf beenden|beenden)\b/i) && has(/\b(mute|unmute|stumm|mikrofon)\b/i)) return 'active';
     const idle = app === 'teams' ? /\b(chat|calendar|activity|kalender|aktivität)\b/i : app === 'whatsapp' ? /\b(chats|calls|anrufe|new chat|neuer chat)\b/i : /\b(recents|recent calls|keypad|new facetime|new call|letzte|ziffernblock|neuer anruf)\b/i;
     return complete && has(idle) ? 'idle' : 'unknown';
@@ -21,10 +23,31 @@ export function appleNotificationCall(labels: string[], appleCallSurface: boolea
     const answer = /^(?:answer(?: (?:audio|video))?(?: call)?|accept (?:audio|video) call|(?:audio|video)?anruf annehmen|annehmen)$/i;
     return labels.some(label => answer.test(label.trim().replace(/\s+/g, ' '))) || callControls(labels, 'apple', false) === 'ringing' ? 'ringing' : 'unknown';
 }
+function controlLabel(value: string): string {
+    return value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_.:/-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+export function notificationCallApp(identifier: string, appLabel = ''): CallApp | undefined {
+    // Only stable bundle IDs or exact app-header labels establish provenance.
+    // A message body mentioning Teams is not an app identity.
+    if (/^com\.microsoft\.teams2?(?:[.:/_-]|$)/i.test(identifier) || /^(?:Microsoft )?Teams(?: \(work or school\))?$/i.test(appLabel.trim())) return 'teams';
+    if (/^com\.apple\.(?:FaceTime|Phone)(?:[.:/_-]|$)/i.test(identifier) || /^(?:FaceTime|Phone)$/i.test(appLabel.trim())) return 'apple';
+    if (/^(?:net|com)\.whatsapp(?:[.:/_-]|$)/i.test(identifier) || /^WhatsApp$/i.test(appLabel.trim())) return 'whatsapp';
+    return undefined;
+}
+export function notificationCall(labels: string[], source: CallApp | undefined): ObservedCallState {
+    if (!source) return 'unknown';
+    if (callControls(labels, source, false) === 'ringing') return 'ringing';
+    // Some native banners expose only the audio/video Answer action. Never
+    // interpret invitation acceptance, callback or meeting reminders as ringing.
+    const answer = /^(?:answer(?: (?:audio|video))?(?: call)?|accept (?:audio|video) call|(?:audio|video)?anruf annehmen|annehmen)$/i;
+    return labels.some(label => answer.test(controlLabel(label))) ? 'ringing' : 'unknown';
+}
 const exec = promisify(execFile);
 export async function observeApps(readOutlook = true, enabled: CallApp[] = ['teams', 'apple', 'whatsapp']): Promise<AppObservation> {
     if (process.platform !== 'darwin') return { trusted: false, teams: 'unknown' };
-    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit').func('bool NSApplicationLoad(void)')();
+    // CallDetector initializes AppKit in the parent before creating this worker.
+    // Direct diagnostic calls on the main thread still need that connection.
+    if (isMainThread) initializeAppKit();
     const ax = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices');
     const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation');
     const audio = audioActivity(enabled);
@@ -57,14 +80,15 @@ export async function observeApps(readOutlook = true, enabled: CallApp[] = ['tea
     try {
         const apps: { process: string; call?: CallApp; notification?: boolean }[] = [
             { process: 'FaceTimeNotificationExtension', call: 'apple' }, { process: 'FaceTimeNotificationViewBridgeService', call: 'apple' },
-            { process: 'NotificationCenter', call: 'apple', notification: true },
+            { process: 'com.microsoft.teams2.notificationcenter', call: 'teams' },
+            { process: 'NotificationCenter', notification: true },
             { process: 'Phone', call: 'apple' }, { process: 'FaceTime', call: 'apple' }, { process: 'WhatsApp', call: 'whatsapp' },
             { process: 'MSTeams', call: 'teams' }, { process: 'Microsoft Teams', call: 'teams' },
             ...(readOutlook ? [{ process: 'Microsoft Outlook' }] : []),
         ];
         for (const entry of apps) {
             if (entry.call && !enabled.includes(entry.call)) continue;
-            if (entry.notification && !result.appleCallUI && !audio.apps.apple?.output) continue;
+            if (entry.notification && !enabled.length) continue;
             const app = entry.process;
             let pids: number[];
             try { pids = (await exec('/usr/bin/pgrep', ['-x', app], { timeout: 1500 })).stdout.trim().split('\n').map(Number); } catch { continue; }
@@ -74,32 +98,45 @@ export async function observeApps(readOutlook = true, enabled: CallApp[] = ['tea
                 const root = create(pid); timeout(root, 0.35);
                 const labels: string[] = []; let title = '', date = '', count = 0, complete = true;
                 const deadline = performance.now() + 1200;
-                const visit = (node: unknown, depth = 0) => {
-                    if (depth > 35 || ++count > 1800 || performance.now() > deadline) { complete = false; return; }
+                const notificationStates = new Map<CallApp, ObservedCallState>();
+                const visit = (node: unknown, depth = 0): Set<CallApp> => {
+                    const sources = new Set<CallApp>();
+                    const firstLabel = labels.length;
+                    if (depth > 35 || ++count > 1800 || performance.now() > deadline) { complete = false; return sources; }
                     const role = text(node, 'AXRole');
-                    if (role === 'AXMenuBar') return;
+                    if (role === 'AXMenuBar') return sources;
                     const id = text(node, 'AXIdentifier');
+                    if (entry.notification) {
+                        const appHeader = role === 'AXStaticText' && /(?:app|source)[._-]?(?:name|title|label|header)/i.test(id);
+                        const source = notificationCallApp(id, appHeader ? text(node, 'AXValue') || text(node, 'AXTitle') : '');
+                        if (source) sources.add(source);
+                    }
                     if (app === 'Microsoft Outlook') {
                         if (id === 'subjectField') title = text(node, 'AXValue');
                         if (id === 'dateField') date = text(node, 'AXValue');
-                        if (id === 'bodyField') return;
+                        if (id === 'bodyField') return sources;
                     } else if (['AXButton', 'AXRadioButton', 'AXTab'].includes(role)) {
                         const value = attr(node, 'AXEnabled'); let enabled = true;
                         if (value) try { if (type(value) === booleanType()) enabled = boolean(value); } finally { release(value); }
                         if (enabled) labels.push(id, text(node, 'AXTitle'), text(node, 'AXDescription'), text(node, 'AXHelp'));
                     }
-                    if (['AXTextArea', 'AXTextField', 'AXSecureTextField', 'AXOutline'].includes(role)) return;
+                    if (['AXTextArea', 'AXTextField', 'AXSecureTextField', 'AXOutline'].includes(role)) return sources;
                     const children = attr(node, 'AXChildren');
-                    if (!children) return;
-                    try { if (type(children) === arrayType()) for (let i = 0; i < length(children); i++) visit(at(children, i), depth + 1); }
+                    if (!children) return sources;
+                    try { if (type(children) === arrayType()) for (let i = 0; i < length(children); i++) for (const source of visit(at(children, i), depth + 1)) sources.add(source); }
                     finally { release(children); }
+                    if (entry.notification && sources.size === 1 && ['AXGroup', 'AXWindow', 'AXPopover', 'AXDialog'].includes(role)) {
+                        const source = [...sources][0]!;
+                        if (enabled.includes(source) && notificationCall(labels.slice(firstLabel), source) === 'ringing') notificationStates.set(source, 'ringing');
+                    }
+                    return sources;
                 };
                 let windows = 0;
-                let notification: ObservedCallState = 'unknown';
+                const notification: { state: ObservedCallState } = { state: 'unknown' };
                 const visitWindow = (node: unknown) => {
                     const start = labels.length;
-                    visit(node);
-                    if (entry.notification && appleNotificationCall(labels.slice(start), Boolean(result.appleCallUI || audio.apps.apple?.output)) === 'ringing') notification = 'ringing';
+                    const sources = visit(node);
+                    if (entry.notification && !sources.size && enabled.includes('apple') && appleNotificationCall(labels.slice(start), Boolean(result.appleCallUI || audio.apps.apple?.output)) === 'ringing') notification.state = 'ringing';
                 };
                 try {
                     const values = attr(root, 'AXWindows');
@@ -118,10 +155,16 @@ export async function observeApps(readOutlook = true, enabled: CallApp[] = ['tea
                     }
                 }
                 finally { release(root); }
+                if (entry.notification) {
+                    if (notification.state === 'ringing') notificationStates.set('apple', 'ringing');
+                    for (const [source, state] of notificationStates) {
+                        if (priority[state] > priority[result.calls![source]!]) result.calls![source] = state;
+                        if (source === 'apple' && state === 'ringing') result.appleCallUI = true;
+                    }
+                }
                 if (app === 'Microsoft Outlook' && title && date) result.outlook = { title, date };
                 if (entry.call) {
-                    const state = entry.notification ? notification : callControls(labels, entry.call, complete && windows > 0);
-                    if (entry.notification && state === 'ringing') result.appleCallUI = true;
+                    const state = app === 'com.microsoft.teams2.notificationcenter' ? notificationCall(labels, 'teams') : callControls(labels, entry.call, complete && windows > 0);
                     if (priority[state] > priority[result.calls![entry.call]!]) result.calls![entry.call] = state;
                 }
             }

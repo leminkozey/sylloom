@@ -1,7 +1,8 @@
 import type { EventEmitter } from 'node:events';
 import { createNativeHud } from './native/hud.js';
+import type { WavePhase } from './waveform.js';
 
-export type IndicatorView = { phase: 'starting' | 'recording' | 'processing' | 'copied' | 'error'; level: number };
+export type IndicatorView = { phase: WavePhase; level: number };
 export type HudSurface = { render(view: IndicatorView): void; hide(): void; close(): void };
 type Source = EventEmitter & { state: string; recorder?: { levels: { mic: number } } };
 
@@ -46,9 +47,10 @@ export function attachIndicator(source: Source, warning: (message: string) => vo
         if (!view) { hide(); return; }
         render();
         if (failed) return;
+        timer = setInterval(render, 50); timer.unref();
         if (view.phase === 'copied' || view.phase === 'error') {
             hideTimer = setTimeout(hide, view.phase === 'error' ? 4000 : 1200); hideTimer.unref();
-        } else { timer = setInterval(render, 50); timer.unref(); }
+        }
     };
     source.on('update', update);
     return () => {

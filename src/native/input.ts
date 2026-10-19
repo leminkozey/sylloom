@@ -2,11 +2,12 @@ import koffi from 'koffi';
 import { setTimeout as delay } from 'node:timers/promises';
 import { temporaryClipboard } from './pasteboard.js';
 import type { CapturedInput } from '../insertion.js';
+import { initializeAppKit } from './app-kit.js';
 
 function api() {
     // CLI processes need an AppKit connection before querying system-wide focus.
     // This does not activate a window or take focus away from the user's app.
-    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit').func('bool NSApplicationLoad(void)')();
+    initializeAppKit();
     const ax = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices');
     const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation');
     const trusted = ax.func('bool AXIsProcessTrusted(void)');

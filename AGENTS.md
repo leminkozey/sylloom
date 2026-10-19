@@ -33,6 +33,7 @@ repositories or change parent-workspace remotes.
   preserve keyboard focus and click-through behavior. Respect Reduce Motion.
 - Public source archives use the allowlist in scripts/release.ts. Never archive
   the entire workspace or include local state, binaries, model files or Git history.
-- The project license remains undecided. Do not add or imply an open-source grant.
+- The project uses the MIT License in LICENSE. Keep it in source archives and
+  packages; preserve Velora attribution and third-party license notices.
 - Do not commit, push, publish or deploy without an explicit request. Preserve
   existing changes from other tools or contributors.

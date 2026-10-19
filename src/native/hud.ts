@@ -1,15 +1,14 @@
 import koffi from 'koffi';
 import type { HudSurface, IndicatorView } from '../indicator.js';
 import { createLiquidBubble } from './liquid-bubble.js';
+import { Waveform } from '../waveform.js';
+import { initializeAppKit } from './app-kit.js';
 
 // AppKit stays on Node's main thread. This transparent, nonactivating panel
 // ignores mouse events, so focus and clicks stay in the user's application.
 export function createNativeHud(): HudSurface {
     if (process.platform !== 'darwin') throw new Error("The dictation indicator requires macOS.");
-    const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');
-    const psn = koffi.struct({ highLongOfPSN: 'uint32', lowLongOfPSN: 'uint32' });
-    carbon.func('TransformProcessType', 'int32', [koffi.pointer(psn), 'uint32'])({ highLongOfPSN: 0, lowLongOfPSN: 2 }, 4);
-    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit').func('bool NSApplicationLoad(void)')();
+    initializeAppKit();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');
     const cls = objc.func('void *objc_getClass(str)');
     const sel = objc.func('void *sel_registerName(str)');
@@ -72,8 +71,7 @@ export function createNativeHud(): HudSurface {
     const bubble = createLiquidBubble({ layer: get(surface, sel('layer')), contentLayer: get(content, sel('layer')), width, height, radius: height / 2,
         onHidden: () => object(window, sel('orderOut:'), null) });
     let closed = false;
-    let previousPhase = '';
-    const envelope = Array<number>(barCount).fill(0);
+    const waveform = new Waveform(barCount);
     send(scope, sel('drain'));
 
     const position = () => {
@@ -94,19 +92,22 @@ export function createNativeHud(): HudSurface {
             if (closed) return;
             const scope = pool();
             try {
-                if (view.phase !== previousPhase) { envelope.fill(0); previousPhase = view.phase; }
-                const level = view.level > 0 ? Math.max(0, Math.min(1, (20 * Math.log10(view.level) + 55) / 45)) : 0;
-                envelope.shift(); envelope.push(level);
                 const waiting = view.phase === 'starting' || view.phase === 'processing';
                 const motion = !reducedMotion(workspace, sel('accessibilityDisplayShouldReduceMotion'));
+                const heights = waveform.update(view.phase, view.level, performance.now(), motion);
                 const rgb = view.phase === 'copied' ? [0.16, 0.59, 0.31] : view.phase === 'error' ? [0.77, 0.45, 0.14] : waiting ? [0.53, 0.53, 0.56] : [0.408, 0.42, 0.906];
                 const ink = color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), ...rgb, 1);
-                for (let i = 0; i < bars.length; i++) {
-                    const value = waiting ? (motion ? 0.15 + (Math.sin(Date.now() / 240 - i * 0.6) + 1) * 0.15 : 0.25) : view.phase === 'recording' ? envelope[i]! : 0.15;
-                    const h = 2 + value * 24;
-                    setRect(bars[i], sel('setFrame:'), box(barLeft + i * barStep, (height - h) / 2, barWidth, h));
-                    object(get(bars[i], sel('layer')), sel('setBackgroundColor:'), get(ink, sel('CGColor')));
-                }
+                send(cls('NSAnimationContext'), sel('beginGrouping'));
+                try {
+                    // AppKit interpolates between audio samples at the display's
+                    // refresh rate. New samples retarget the existing animation.
+                    number(get(cls('NSAnimationContext'), sel('currentContext')), sel('setDuration:'), motion ? .09 : 0);
+                    for (let i = 0; i < bars.length; i++) {
+                        const h = heights[i]!;
+                        setRect(get(bars[i], sel('animator')), sel('setFrame:'), box(barLeft + i * barStep, (height - h) / 2, barWidth, h));
+                        object(get(bars[i], sel('layer')), sel('setBackgroundColor:'), get(ink, sel('CGColor')));
+                    }
+                } finally { send(cls('NSAnimationContext'), sel('endGrouping')); }
                 if (bubble.phase === 'hidden' || bubble.phase === 'hiding') {
                     if (bubble.phase === 'hidden') { position(); number(window, sel('setAlphaValue:'), 0); }
                     send(window, sel('orderFrontRegardless'));
@@ -121,7 +122,7 @@ export function createNativeHud(): HudSurface {
                 send(app, sel('updateWindows'));
             } finally { send(scope, sel('drain')); }
         },
-        hide() { if (!closed) bubble.hide(); },
+        hide() { if (!closed) { waveform.reset(); bubble.hide(); } },
         close() {
             if (closed) return;
             closed = true; bubble.close(); object(window, sel('orderOut:'), null); send(window, sel('close')); send(window, sel('release'));

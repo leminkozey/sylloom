@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<symbol id="video" viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/></symbol>
+<symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></symbol>
+<symbol id="hangup" viewBox="0 0 24 24"><path d="M3 11c5-5 13-5 18 0v5h-5v-4a15 15 0 0 0-8 0v4H3z"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+<symbol id="grid" viewBox="0 0 24 24"><path d="M6 5h.01M12 5h.01M18 5h.01M6 12h.01M12 12h.01M18 12h.01M6 19h.01M12 19h.01M18 19h.01" stroke-width="4"/></symbol>
+<symbol id="share" viewBox="0 0 24 24"><path d="M8 9H4v12h16V9h-4M12 16V2m-5 5 5-5 5 5"/></symbol>
+<symbol id="compose" viewBox="0 0 24 24"><path d="M20 13v7H4V4h8M10 14l2-6 7-7 4 4-7 7z"/></symbol>
+</svg>

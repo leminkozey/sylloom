@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { Worker } from 'node:worker_threads';
+import { initializeAppKit } from './native/app-kit.js';
 import { existsSync } from 'node:fs';
 import type { AppObservation, CallApp } from './native/app-reader.js';
 import { teamsToken } from './native/keychain.js';
@@ -37,6 +38,7 @@ export class CallDetector extends EventEmitter {
     stateFor(callId: number): CallSnapshot | undefined { return [...this.states.values()].find(call => call.callId === callId); }
     start(): void {
         if (process.platform !== 'darwin') { this.setState('unknown', 'none', 'Local call detection currently requires macOS.'); return; }
+        initializeAppKit();
         let url = new URL('./app-observer-worker.js', import.meta.url);
         if (!existsSync(url)) url = new URL('./app-observer-worker.ts', import.meta.url);
         this.observer = new Worker(url, { stdout: true, stderr: true, execArgv: process.execArgv.filter(value => !value.startsWith('--input-type')) });

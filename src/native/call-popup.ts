@@ -1,14 +1,12 @@
 import koffi from 'koffi';
 import { fileURLToPath } from 'node:url';
 import { createLiquidBubble } from './liquid-bubble.js';
+import { initializeAppKit } from './app-kit.js';
 export type Popup = { show(title: string, detail: string, actions: { id: string; label: string }[]): void; hide(): void; close(): void };
 
 export function createCallPopup(action: (id: string) => void): Popup {
     if (process.platform !== 'darwin') throw new Error('Call popups require macOS.');
-    const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');
-    const psn = koffi.struct({ highLongOfPSN: 'uint32', lowLongOfPSN: 'uint32' });
-    carbon.func('TransformProcessType', 'int32', [koffi.pointer(psn), 'uint32'])({ highLongOfPSN: 0, lowLongOfPSN: 2 }, 4);
-    koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit').func('bool NSApplicationLoad(void)')();
+    initializeAppKit();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');
     const cls = objc.func('void *objc_getClass(str)'), sel = objc.func('void *sel_registerName(str)');
     const point = koffi.struct({ x: 'double', y: 'double' });
