@@ -2,14 +2,14 @@ import { EventEmitter } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import { initializeAppKit } from './native/app-kit.js';
 import { existsSync } from 'node:fs';
-import type { AppObservation, CallApp } from './native/app-reader.js';
+import type { AppObservation, CallApp, ObservedCallState } from './native/app-reader.js';
 import { teamsToken } from './native/keychain.js';
 import { version } from './brand.js';
 import { normalizeEvent } from './calendar.js';
 import type { CalendarEvent } from './calendar.js';
 import type { Settings } from './types.js';
 
-export type CallState = 'unknown' | 'idle' | 'ringing' | 'active';
+export type CallState = ObservedCallState;
 export type CallSnapshot = { state: CallState; source: string; message: string; since: string; callId: number; accessibility: boolean; app?: CallApp };
 const labels: Record<CallApp, string> = { teams: 'Teams', apple: 'FaceTime / iPhone', whatsapp: 'WhatsApp' };
 export function enabledCallApps(config: Settings): CallApp[] {
@@ -29,13 +29,21 @@ export class CallDetector extends EventEmitter {
     private trusted = false;
     private apiState: CallState = 'unknown';
     private axState: CallState = 'unknown';
-    private apiEndedCall = false;
+    private apiJoinedCall?: number;
+    private apiEndedCall?: number;
+    private teamsConfirmedCalls = new Set<number>();
+    private teamsObservedEnd?: number;
     private sequence = 0;
     private states = new Map<CallApp, CallSnapshot>();
+    private retiredStates = new Map<number, CallSnapshot>();
     private idleSamples = new Map<CallApp, number>();
     private appleCallUISeen?: number;
     constructor(private port = 8124) { super(); }
-    stateFor(callId: number): CallSnapshot | undefined { return [...this.states.values()].find(call => call.callId === callId); }
+    stateFor(callId: number): CallSnapshot | undefined { return [...this.states.values()].find(call => call.callId === callId) || this.retiredStates.get(callId); }
+    canAutoStop(callId: number): boolean {
+        const call = this.stateFor(callId);
+        return Boolean(callId && call && (call.app !== 'teams' || this.teamsConfirmedCalls.has(callId)));
+    }
     start(): void {
         if (process.platform !== 'darwin') { this.setState('unknown', 'none', 'Local call detection currently requires macOS.'); return; }
         initializeAppKit();
@@ -65,9 +73,9 @@ export class CallDetector extends EventEmitter {
         socket.onmessage = event => { if (typeof event.data === 'string' && event.data.length < 65536) this.apiMessage(event.data); };
         socket.onerror = () => socket.close();
         socket.onclose = () => {
-            clearTimeout(this.timeout); this.apiState = 'unknown'; this.apiEndedCall = false;
+            clearTimeout(this.timeout); this.apiState = 'unknown';
             if (this.closed) return;
-            this.setState(['active', 'ringing'].includes(this.axState) ? this.axState : 'unknown', 'accessibility', 'Teams local API unavailable. Local call detection remains enabled.');
+            this.setState(['active', 'ringing', 'joining'].includes(this.axState) ? this.axState : 'unknown', 'accessibility', 'Teams local API unavailable. Local call detection remains enabled.');
             this.reconnect = setTimeout(() => this.connect(), 10000); this.reconnect.unref();
         };
     }
@@ -78,11 +86,22 @@ export class CallDetector extends EventEmitter {
             if (typeof data.tokenRefresh === 'string') { try { teamsToken(data.tokenRefresh); } catch {} }
             const update = data.meetingUpdate;
             if (typeof update?.meetingState?.isInMeeting === 'boolean') {
-                this.apiEndedCall = !update.meetingState.isInMeeting && (this.apiState === 'active' || this.states.get('teams')?.state === 'active');
                 this.apiState = update.meetingState.isInMeeting ? 'active' : 'idle';
-                this.setState(this.apiState === 'idle' && this.axState === 'ringing' ? 'ringing' : this.apiState, 'local-api', 'Teams local API connected.');
-            } else if (update?.meetingPermissions?.canPair === true) {
-                this.apiState = 'active'; this.setState('active', 'local-api', 'Teams call detected from local meeting permissions.');
+                if (this.apiState === 'active') {
+                    this.setState('active', 'local-api', 'Teams local API connected.');
+                    this.apiEndedCall = undefined; this.teamsObservedEnd = undefined;
+                    this.apiJoinedCall = this.states.get('teams')!.callId;
+                } else {
+                    const current = this.states.get('teams');
+                    // Preview audio and pairing permissions are not a joined
+                    // meeting. Only end the call this API actually saw joined.
+                    if (current?.callId && this.apiJoinedCall === current.callId) this.apiEndedCall = current.callId;
+                    if (this.apiEndedCall === current?.callId && current?.callId) this.setState('idle', 'local-api', 'Teams local API confirmed the meeting ended.');
+                    else if (this.axState === 'ringing' || this.axState === 'joining') this.setState(this.axState, 'accessibility', this.axState === 'joining' ? 'Teams meeting preview. Waiting to join.' : 'Teams incoming-call controls detected.');
+                    else if (!current?.callId) this.setState('idle', 'local-api', 'Teams local API connected.');
+                }
+            } else if (update?.meetingPermissions?.canPair === true && this.axState !== 'joining' && this.apiState === 'unknown') {
+                this.setState('active', 'meeting-permissions', 'Teams meeting permissions detected. Call connection is not confirmed.');
             }
         } catch { /* Ignore unknown protocol messages; never log tokens or call content. */ }
     }
@@ -106,13 +125,23 @@ export class CallDetector extends EventEmitter {
             const idle = (ax === 'idle' && !duplex && (app !== 'apple' || data.appleCallUI === false)) || endedApple;
             const samples = idle ? (this.idleSamples.get(app) || 0) + 1 : 0;
             this.idleSamples.set(app, samples);
+            const endedTeamsCall = app === 'teams' && this.apiEndedCall === this.states.get(app)?.callId && this.apiEndedCall !== undefined;
+            if (endedTeamsCall && (ax === 'idle' || ax === 'joining')) this.teamsObservedEnd = this.apiEndedCall;
             if (ax === 'ringing') {
-                if (app === 'teams') this.apiEndedCall = false;
                 this.setState('ringing', 'accessibility', labels[app] + ' incoming-call controls detected.', app);
-            } else if (app === 'teams' && (this.apiState === 'active' || this.apiEndedCall)) this.setState(this.apiState, 'local-api', 'Teams local API connected.', app);
+                if (app === 'teams') { this.apiEndedCall = undefined; this.teamsObservedEnd = undefined; }
+            } else if (app === 'teams' && this.apiState === 'active' && this.apiJoinedCall === this.states.get(app)?.callId) this.setState('active', 'local-api', 'Teams local API connected.', app);
+            else if (endedTeamsCall && ax === 'active' && this.teamsObservedEnd === this.apiEndedCall) {
+                // An intervening idle/preview followed by joined controls proves a
+                // new native call. Lingering controls from the ended call do not.
+                this.setState('active', 'accessibility', 'Teams call controls detected.', app);
+                this.apiEndedCall = undefined; this.apiJoinedCall = undefined; this.teamsObservedEnd = undefined;
+            }
+            else if (app === 'teams' && this.apiEndedCall && this.apiEndedCall === this.states.get(app)?.callId) this.setState('idle', 'local-api', 'Teams local API confirmed the meeting ended.', app);
+            else if (app === 'teams' && ax === 'joining') this.setState('joining', 'accessibility', 'Teams meeting preview. Waiting to join.', app);
             else if (ax === 'active') this.setState('active', 'accessibility', labels[app] + ' call controls detected.', app);
             else if (duplex) this.setState('active', 'audio-activity', labels[app] + ' has an active microphone and output stream. Incoming/ringing is not confirmed.', app);
-            else if (idle && samples >= 3) this.setState('idle', 'accessibility', labels[app] + ' call ended: app controls and audio are inactive.', app);
+            else if (idle && samples >= 3 && (app !== 'teams' || this.canAutoStop(this.states.get(app)?.callId || 0))) this.setState('idle', 'accessibility', labels[app] + ' call ended: app controls and audio are inactive.', app);
             else if (app === 'teams' && this.apiState === 'idle' && !this.states.get(app)?.callId) this.setState('idle', 'local-api', 'Teams local API connected.', app);
             else this.setState('unknown', 'accessibility', data.trusted ? 'Waiting for reliable ' + labels[app] + ' call signals.' : 'Enable Accessibility for the terminal running Sylloom.', app);
             if (app === 'apple' && data.appleCallUI && this.states.get('apple')?.callId) this.appleCallUISeen = this.states.get('apple')!.callId;
@@ -122,8 +151,18 @@ export class CallDetector extends EventEmitter {
         if (this.closed) return;
         const previous = this.states.get(app);
         const active = state === 'ringing' || state === 'active';
-        const existing = Boolean(previous?.callId && previous.state !== 'idle');
+        const existing = Boolean(previous?.callId && previous.state !== 'idle' && !(app === 'teams' && this.apiEndedCall === previous.callId));
         const callId = active && !existing ? ++this.sequence : previous?.callId || 0;
+        if (previous?.callId && previous.callId !== callId) {
+            // Keep the ended owner available during the bridge's hangup debounce,
+            // even when another call in the same app starts immediately.
+            this.retiredStates.set(previous.callId, previous);
+            if (this.retiredStates.size > 128) {
+                const oldest = this.retiredStates.keys().next().value!;
+                this.retiredStates.delete(oldest); this.teamsConfirmedCalls.delete(oldest);
+            }
+        }
+        if (app === 'teams' && active && ['local-api', 'accessibility'].includes(source)) this.teamsConfirmedCalls.add(callId);
         const next: CallSnapshot = { state, source, message, since: state === previous?.state ? previous.since : new Date().toISOString(), callId, accessibility: this.trusted, app };
         this.states.set(app, next);
         const calls = [...this.states.values()];

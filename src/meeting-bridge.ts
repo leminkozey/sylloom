@@ -59,6 +59,7 @@ export class MeetingBridge extends EventEmitter {
         return ['Started from: ' + capture.origin,
             !capture.callId || !this.config.callAutoStop ? 'Auto-stop Off. Stop this recording manually.' :
                 !owner || owner.state === 'unknown' ? 'Auto-stop unavailable, recording continues. Stop manually.' :
+                !capture.detector?.canAutoStop(owner.callId) ? 'Waiting for a confirmed call before auto-stop. Recording continues; stop manually if needed.' :
                 owner.state === 'idle' ? 'This call ended. Waiting for stable hangup before stopping.' : 'Auto-stop follows this call only. A new call cannot take over this recording.'];
     }
     start(): Promise<void> { return this.starting ||= this.initialize(); }
@@ -83,7 +84,7 @@ export class MeetingBridge extends EventEmitter {
         this.reminderTimer = setInterval(() => { void this.checkReminders().catch(error => { this.progress = errorMessage(error); this.changed(); }); }, 15000); this.reminderTimer.unref();
     }
     private reminderBlocked(): boolean {
-        return this.closed || this.offeredCall !== undefined || !this.config.meetingReminders || this.recording || this.working || this.service.busy || Boolean(this.screen?.recordingActive) || ['active', 'ringing'].includes(this.call.state);
+        return this.closed || this.offeredCall !== undefined || !this.config.meetingReminders || this.recording || this.working || this.service.busy || Boolean(this.screen?.recordingActive) || ['active', 'ringing', 'joining'].includes(this.call.state);
     }
     async checkReminders(now = Date.now()): Promise<void> {
         if (this.offeredEvent && (Date.parse(this.offeredEvent.start) <= now || this.reminderBlocked())) {
@@ -137,20 +138,25 @@ export class MeetingBridge extends EventEmitter {
     }
     private callChanged(): void {
         const call = this.call;
-        if (['ringing', 'active'].includes(call.state) && this.offeredEvent) { this.offeredEvent = undefined; this.popup?.hide(); }
+        if (['ringing', 'active', 'joining'].includes(call.state) && this.offeredEvent) { this.offeredEvent = undefined; this.popup?.hide(); }
         const owner = this.capture?.detector === this.detector && this.capture?.callId ? this.detector?.stateFor(this.capture.callId) : undefined;
         const key = JSON.stringify([call.state, call.source, call.callId, call.message, call.accessibility]);
         if (key !== this.lastCall) { this.lastCall = key; this.changed(); }
-        if (owner?.state !== 'idle') { clearTimeout(this.callEndTimer); this.callEndTimer = undefined; }
+        const canStop = Boolean(owner && this.detector?.canAutoStop(owner.callId));
+        if (owner?.state !== 'idle' || !canStop) { clearTimeout(this.callEndTimer); this.callEndTimer = undefined; }
+        if (call.state === 'joining' && this.offeredCall !== undefined) {
+            if (!this.capture) { this.shownCalls.delete(this.offeredCall); this.popup?.hide(); }
+            this.offeredCall = undefined;
+        }
         if (call.state === 'idle' && this.offeredCall !== undefined) { this.offeredCall = undefined; if (!this.capture) this.popup?.hide(); }
-        if (this.config.callAutoStop && this.capture && owner?.state === 'idle' && !this.callEndTimer) {
+        if (this.config.callAutoStop && this.capture && owner?.state === 'idle' && canStop && !this.callEndTimer) {
             const id = this.capture.session.id;
             // A disconnected observer emits unknown. Only a stable, confirmed idle
             // state can stop the capture belonging to this particular call.
             this.callEndTimer = setTimeout(() => {
                 this.callEndTimer = undefined;
                 const owner = this.capture?.detector === this.detector && this.capture?.callId ? this.detector?.stateFor(this.capture.callId) : undefined;
-                if (this.config.callAutoStop && owner?.state === 'idle' && this.capture?.session.id === id) {
+                if (this.config.callAutoStop && owner?.state === 'idle' && this.detector?.canAutoStop(owner.callId) && this.capture?.session.id === id) {
                     void this.stopRecording().catch(error => { this.progress = errorMessage(error); this.changed(); });
                 }
             }, 1500); this.callEndTimer.unref();
@@ -160,7 +166,8 @@ export class MeetingBridge extends EventEmitter {
         this.offeredEvent = undefined;
         this.offeredCall = call.callId;
         const app = call.app === 'apple' ? 'FaceTime / iPhone' : call.app === 'whatsapp' ? 'WhatsApp' : 'Teams';
-        this.showPopup(call.state === 'ringing' ? 'Incoming call' : call.source === 'audio-activity' ? 'Audio session detected' : 'Call detected', app + (this.config.callAutoStop ? ' · Record? Auto-stop on hangup.' : ' · Record this call?'),
+        const stopHint = !this.config.callAutoStop ? ' · Record this call?' : this.detector?.canAutoStop(call.callId) ? ' · Record? Auto-stop on hangup.' : ' · Record? Auto-stop waits for connection.';
+        this.showPopup(call.state === 'ringing' ? 'Incoming call' : call.source === 'audio-activity' ? 'Audio session detected' : 'Call detected', app + stopHint,
             [{ id: 'record', label: 'Record' }, { id: 'dismiss', label: 'Dismiss' }]);
     }
     private async popupAction(action: string): Promise<void> {

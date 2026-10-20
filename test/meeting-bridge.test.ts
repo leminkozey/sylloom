@@ -112,6 +112,51 @@ class FakeRecorder extends EventEmitter {
     async stop() { if (this.stops) return; this.stops++; this.session.state = 'stopped'; this.session.stoppedAt = new Date().toISOString(); await saveSession(this.session); }
 }
 
+test('recording begun during Teams preview survives not joined and stops only after a real meeting ends', async () => {
+    const calls = new CallDetector(); calls.start = () => {};
+    const config = { ...defaults, detectAppleCalls: false, detectWhatsAppCalls: false, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
+    const service = new DictationService(config); let recorder!: FakeRecorder;
+    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls, recorder: session => (recorder = new FakeRecorder(session)) as unknown as Recorder });
+    const api = (isInMeeting: boolean) => calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting } } }));
+    try {
+        await bridge.start();
+        calls.observe({ trusted: true, teams: 'idle', audio: { supported: true, apps: { teams: { input: true, output: true } } } });
+        const callId = calls.snapshot.callId;
+        const id = await bridge.startRecording();
+        api(false); calls.observe({ trusted: true, teams: 'joining' }); api(false);
+        await delay(1650);
+        assert.equal(bridge.recording, true, 'Preview must not stop the recording or open the naming flow');
+        assert.equal(recorder.stops, 0); assert.equal(bridge.finishRequested, false);
+        api(true); assert.equal(calls.snapshot.callId, callId);
+        api(false); api(false); calls.observe({ trusted: true, teams: 'unknown' });
+        await delay(1650);
+        assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
+        const session = await loadSession(id);
+        assert.equal(session.name, null); assert.equal(session.decision, null);
+        session.name = 'Finished preview fixture'; session.decision = 'delete'; session.state = 'done'; await saveSession(session);
+    } finally { await bridge.close(); await service.close(); }
+});
+
+test('a Teams preview withdraws its provisional popup and joining the meeting offers recording again', async () => {
+    const calls = new CallDetector(); calls.start = () => {};
+    const config = { ...defaults, detectAppleCalls: false, detectWhatsAppCalls: false, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
+    const service = new DictationService(config); const shown: string[] = []; let hidden = 0;
+    const popup = { show(title: string) { shown.push(title); }, hide() { hidden++; }, close() {} };
+    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls, popup });
+    try {
+        await bridge.start();
+        calls.observe({ trusted: true, teams: 'joining', audio: { supported: true, apps: { teams: { input: true, output: true } } } });
+        assert.equal(shown.length, 0, 'Preview audio is not an incoming call');
+        calls.observe({ trusted: true, teams: 'unknown', audio: { supported: true, apps: { teams: { input: true, output: true } } } });
+        assert.equal(shown.length, 1); const id = calls.snapshot.callId;
+        calls.observe({ trusted: true, teams: 'joining' });
+        assert.equal(hidden, 1);
+        calls.observe({ trusted: true, teams: 'active' });
+        assert.equal(calls.snapshot.callId, id); assert.equal(shown.length, 2);
+        assert.equal(shown.at(-1), 'Call detected'); assert.equal(bridge.recording, false);
+    } finally { await bridge.close(); await service.close(); }
+});
+
 test('call-linked capture stops on confirmed hangup and preserves mandatory decisions', async () => {
     const calls = new CallDetector(); calls.start = () => {};
     const config = { ...defaults, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
@@ -147,6 +192,26 @@ test('only the call that started capture may stop it, even when another app owns
         const session = await loadSession(id);
         assert.equal(session.name, null); assert.equal(session.decision, null);
         session.name = 'Finished ownership fixture'; session.decision = 'delete'; session.state = 'done'; await saveSession(session);
+    } finally { await bridge.close(); await service.close(); }
+});
+
+test('a new call in the same app cannot erase the captured call hangup during auto-stop debounce', async () => {
+    const calls = new CallDetector(); calls.start = () => {};
+    const config = { ...defaults, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
+    const service = new DictationService(config); let recorder!: FakeRecorder;
+    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls, recorder: session => (recorder = new FakeRecorder(session)) as unknown as Recorder });
+    const api = (isInMeeting: boolean) => calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting } } }));
+    try {
+        await bridge.start(); api(true); const owner = calls.snapshot.callId;
+        const id = await bridge.startRecording();
+        api(false); api(true);
+        assert.notEqual(calls.snapshot.callId, owner); assert.equal(calls.snapshot.state, 'active');
+        assert.equal(calls.stateFor(owner)?.state, 'idle');
+        await delay(1650);
+        assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
+        const session = await loadSession(id);
+        assert.equal(session.name, null); assert.equal(session.decision, null);
+        session.name = 'Finished consecutive call fixture'; session.decision = 'delete'; session.state = 'done'; await saveSession(session);
     } finally { await bridge.close(); await service.close(); }
 });
 

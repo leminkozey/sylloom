@@ -6,13 +6,14 @@ import { promisify } from 'node:util';
 import { audioActivity } from './audio-activity.js';
 import type { AudioActivity } from './audio-activity.js';
 
-export type ObservedCallState = 'ringing' | 'active' | 'idle' | 'unknown';
+export type ObservedCallState = 'ringing' | 'joining' | 'active' | 'idle' | 'unknown';
 export type CallApp = 'teams' | 'apple' | 'whatsapp';
 export type AppObservation = { trusted: boolean; teams: ObservedCallState; calls?: Partial<Record<CallApp, ObservedCallState>>; audio?: AudioActivity; appleCallUI?: boolean; outlook?: { title: string; date: string } };
 export function callControls(labels: string[], app: CallApp, complete: boolean): ObservedCallState {
     const has = (pattern: RegExp) => labels.some(label => pattern.test(controlLabel(label)));
     if (!has(/\b(invitation|invite|einladung)\b/i) && has(/\b(accept|answer|annehmen)\b/i) && has(/\b(decline|reject|ablehnen)\b/i)) return 'ringing';
     if (has(/\b(hang.?up|end.?call|leave|verlassen|auflegen|anruf beenden|beenden)\b/i) && has(/\b(mute|unmute|stumm|mikrofon)\b/i)) return 'active';
+    if (app === 'teams' && has(/\b(microphone|mic|mikrofon|camera|kamera)\b/i) && has(/\b(pre ?join|join now|jetzt teilnehmen|jetzt beitreten)\b|^(join|teilnehmen|beitreten)( button)?$/i)) return 'joining';
     const idle = app === 'teams' ? /\b(chat|calendar|activity|kalender|aktivität)\b/i : app === 'whatsapp' ? /\b(chats|calls|anrufe|new chat|neuer chat)\b/i : /\b(recents|recent calls|keypad|new facetime|new call|letzte|ziffernblock|neuer anruf)\b/i;
     return complete && has(idle) ? 'idle' : 'unknown';
 }
@@ -41,6 +42,37 @@ export function notificationCall(labels: string[], source: CallApp | undefined):
     // interpret invitation acceptance, callback or meeting reminders as ringing.
     const answer = /^(?:answer(?: (?:audio|video))?(?: call)?|accept (?:audio|video) call|(?:audio|video)?anruf annehmen|annehmen)$/i;
     return labels.some(label => answer.test(controlLabel(label))) ? 'ringing' : 'unknown';
+}
+export type NotificationNode = { role: string; identifier?: string; appHeader?: string; labels?: string[]; children?: NotificationNode[] };
+export function notificationCallTree(root: NotificationNode): { calls: Partial<Record<CallApp, ObservedCallState>>; identified: boolean } {
+    const calls: Partial<Record<CallApp, ObservedCallState>> = {};
+    let identified = false;
+    const visit = (node: NotificationNode): { sources: Set<CallApp>; unknownHeader: boolean; labels: string[] } => {
+        const source = notificationCallApp(node.identifier || '', node.appHeader);
+        if (source || node.appHeader !== undefined) identified = true;
+        const branch = { sources: new Set<CallApp>(source ? [source] : []), unknownHeader: node.appHeader !== undefined && !source, labels: [...node.labels || []] };
+        for (const child of node.children || []) {
+            const value = visit(child);
+            for (const app of value.sources) branch.sources.add(app);
+            branch.unknownHeader ||= value.unknownHeader;
+            branch.labels.push(...value.labels);
+        }
+        if (['AXGroup', 'AXPopover', 'AXDialog'].includes(node.role) && (branch.sources.size || branch.unknownHeader)) {
+            const headerOnly = /^(?:notification[-_.])?(?:app|source)[-_.]?(?:name|title|label|header)$/i.test(node.identifier || '') && !branch.labels.length;
+            if (headerOnly) return branch;
+            if (branch.labels.length && branch.sources.size === 1 && !branch.unknownHeader) {
+                const app = [...branch.sources][0]!;
+                if (notificationCall(branch.labels, app) === 'ringing') calls[app] = 'ringing';
+            }
+            // App-header containers may pass metadata to their own card. Other
+            // identified groups own it even without actions, so ancestors cannot
+            // lend a message card's identity to actions in a sibling card.
+            return { sources: new Set(), unknownHeader: false, labels: [] };
+        }
+        return branch;
+    };
+    visit(root);
+    return { calls, identified };
 }
 const exec = promisify(execFile);
 export async function observeApps(readOutlook = true, enabled: CallApp[] = ['teams', 'apple', 'whatsapp']): Promise<AppObservation> {
@@ -76,7 +108,7 @@ export async function observeApps(readOutlook = true, enabled: CallApp[] = ['tea
         finally { release(value); }
     };
     const result: AppObservation = { trusted: true, teams: 'unknown', audio, appleCallUI: false, calls: { teams: 'unknown', apple: 'unknown', whatsapp: 'unknown' } };
-    const priority = { unknown: 0, idle: 1, active: 2, ringing: 3 };
+    const priority = { unknown: 0, idle: 1, joining: 2, active: 3, ringing: 4 };
     try {
         const apps: { process: string; call?: CallApp; notification?: boolean }[] = [
             { process: 'FaceTimeNotificationExtension', call: 'apple' }, { process: 'FaceTimeNotificationViewBridgeService', call: 'apple' },
@@ -99,44 +131,47 @@ export async function observeApps(readOutlook = true, enabled: CallApp[] = ['tea
                 const labels: string[] = []; let title = '', date = '', count = 0, complete = true;
                 const deadline = performance.now() + 1200;
                 const notificationStates = new Map<CallApp, ObservedCallState>();
-                const visit = (node: unknown, depth = 0): Set<CallApp> => {
-                    const sources = new Set<CallApp>();
-                    const firstLabel = labels.length;
-                    if (depth > 35 || ++count > 1800 || performance.now() > deadline) { complete = false; return sources; }
+                const visit = (node: unknown, depth = 0): NotificationNode => {
+                    const branch: NotificationNode = { role: '', children: [] };
+                    if (depth > 35 || ++count > 1800 || performance.now() > deadline) { complete = false; return branch; }
                     const role = text(node, 'AXRole');
-                    if (role === 'AXMenuBar') return sources;
+                    branch.role = role;
+                    if (role === 'AXMenuBar') return branch;
                     const id = text(node, 'AXIdentifier');
                     if (entry.notification) {
                         const appHeader = role === 'AXStaticText' && /(?:app|source)[._-]?(?:name|title|label|header)/i.test(id);
-                        const source = notificationCallApp(id, appHeader ? text(node, 'AXValue') || text(node, 'AXTitle') : '');
-                        if (source) sources.add(source);
+                        branch.identifier = id;
+                        if (appHeader) branch.appHeader = text(node, 'AXValue') || text(node, 'AXTitle');
                     }
                     if (app === 'Microsoft Outlook') {
                         if (id === 'subjectField') title = text(node, 'AXValue');
                         if (id === 'dateField') date = text(node, 'AXValue');
-                        if (id === 'bodyField') return sources;
+                        if (id === 'bodyField') return branch;
                     } else if (['AXButton', 'AXRadioButton', 'AXTab'].includes(role)) {
                         const value = attr(node, 'AXEnabled'); let enabled = true;
                         if (value) try { if (type(value) === booleanType()) enabled = boolean(value); } finally { release(value); }
-                        if (enabled) labels.push(id, text(node, 'AXTitle'), text(node, 'AXDescription'), text(node, 'AXHelp'));
+                        if (enabled) {
+                            const actions = [id, text(node, 'AXTitle'), text(node, 'AXDescription'), text(node, 'AXHelp')].filter(Boolean);
+                            labels.push(...actions); if (entry.notification) branch.labels = actions;
+                        }
                     }
-                    if (['AXTextArea', 'AXTextField', 'AXSecureTextField', 'AXOutline'].includes(role)) return sources;
+                    if (['AXTextArea', 'AXTextField', 'AXSecureTextField', 'AXOutline'].includes(role)) return branch;
                     const children = attr(node, 'AXChildren');
-                    if (!children) return sources;
-                    try { if (type(children) === arrayType()) for (let i = 0; i < length(children); i++) for (const source of visit(at(children, i), depth + 1)) sources.add(source); }
+                    if (!children) return branch;
+                    try { if (type(children) === arrayType()) for (let i = 0; i < length(children); i++) branch.children!.push(visit(at(children, i), depth + 1)); }
                     finally { release(children); }
-                    if (entry.notification && sources.size === 1 && ['AXGroup', 'AXWindow', 'AXPopover', 'AXDialog'].includes(role)) {
-                        const source = [...sources][0]!;
-                        if (enabled.includes(source) && notificationCall(labels.slice(firstLabel), source) === 'ringing') notificationStates.set(source, 'ringing');
-                    }
-                    return sources;
+                    return branch;
                 };
                 let windows = 0;
                 const notification: { state: ObservedCallState } = { state: 'unknown' };
                 const visitWindow = (node: unknown) => {
                     const start = labels.length;
-                    const sources = visit(node);
-                    if (entry.notification && !sources.size && enabled.includes('apple') && appleNotificationCall(labels.slice(start), Boolean(result.appleCallUI || audio.apps.apple?.output)) === 'ringing') notification.state = 'ringing';
+                    const tree = visit(node);
+                    if (entry.notification) {
+                        const classified = notificationCallTree(tree);
+                        for (const [app, state] of Object.entries(classified.calls)) if (enabled.includes(app as CallApp)) notificationStates.set(app as CallApp, state);
+                        if (!classified.identified && enabled.includes('apple') && appleNotificationCall(labels.slice(start), Boolean(result.appleCallUI || audio.apps.apple?.output)) === 'ringing') notification.state = 'ringing';
+                    }
                 };
                 try {
                     const values = attr(root, 'AXWindows');
