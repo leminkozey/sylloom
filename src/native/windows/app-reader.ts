@@ -90,6 +90,10 @@ export function observeWindowsApps(enabled: CallApp[]): AppObservation {
         // An idle navigation window cannot prove hangup if another window of
         // that app was unreadable or the desktop scan was cut short.
         for (const app of enabled) if (result.calls![app] === 'idle' && (!enumerationComplete || uncertain.has(app))) result.calls![app] = 'unknown';
+        // Keep the shared call-panel guard explicit on both platforms. An
+        // unknown/missing window is not evidence that Phone Link hung up.
+        if (result.calls!.apple === 'idle') result.appleCallUI = false;
+        else if (['ringing', 'joining', 'active'].includes(result.calls!.apple || '')) result.appleCallUI = true;
         // UIA needs no global Accessibility grant. Elevated and unavailable
         // app providers remain unknown, which must never be treated as hangup.
         result.trusted = true; result.teams = result.calls!.teams || 'unknown'; return result;

@@ -123,7 +123,7 @@ export class CallDetector extends EventEmitter {
             const endedApple = app === 'apple' && appleId && this.appleCallUISeen === appleId && data.appleCallUI === false && audio && !audio.input && !audio.output;
             // The Phone/FaceTime main window may show navigation while a separate
             // call panel is active. Its navigation is not proof of hangup.
-            const idle = (ax === 'idle' && !duplex && (app !== 'apple' || process.platform === 'win32' || data.appleCallUI === false)) || endedApple;
+            const idle = (ax === 'idle' && !duplex && (app !== 'apple' || data.appleCallUI === false)) || endedApple;
             const samples = idle ? (this.idleSamples.get(app) || 0) + 1 : 0;
             this.idleSamples.set(app, samples);
             const endedTeamsCall = app === 'teams' && this.apiEndedCall === this.states.get(app)?.callId && this.apiEndedCall !== undefined;

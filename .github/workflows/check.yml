@@ -18,6 +18,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+        id: dependencies
       - run: npm run check
       - run: npm test
       - run: npm run build
@@ -33,14 +34,15 @@ jobs:
           if ($errors.Count) { throw ($errors | Out-String) }
           .\sylloom.cmd --version
           if ($LASTEXITCODE -ne 0) { throw 'Windows entrypoint failed.' }
-      - if: runner.os == 'Windows'
+      - if: always() && runner.os == 'Windows' && steps.dependencies.conclusion == 'success'
         name: Install and verify official CPU runtimes
+        id: runtimes
         shell: powershell
         env:
           SYLLOOM_HOME: ${{ runner.temp }}\sylloom-install-check
           SYLLOOM_GITHUB_TOKEN: ${{ github.token }}
         run: .\install.ps1 -SkipModels -NoLink
-      - if: runner.os == 'Windows'
+      - if: always() && runner.os == 'Windows' && steps.runtimes.conclusion == 'success'
         name: Native Windows smoke tests
         env:
           SYLLOOM_TEST_WINDOWS: '1'
