@@ -3,10 +3,28 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { automation, com, outPointer, release } from './automation.js';
 import type { ComPointer } from './automation.js';
 import { windows } from './api.js';
+import type { Pointer } from './api.js';
 import { temporaryWindowsClipboard } from './clipboard.js';
 import type { CapturedInput } from '../../insertion.js';
 
 export function windowsInsertionAvailable(): boolean { try { automation(); return true; } catch { return false; } }
+
+function nativeInputBlocked(): boolean {
+    // UIA's provider can retain the old IsPassword value after an Edit changes
+    // its mask. Native Edit/RichEdit controls expose the current ES_PASSWORD
+    // flag directly. Windowless controls still require UIA's password checks.
+    const api = windows(), buffer = Buffer.alloc(1024);
+    const state = { size: koffi.sizeof(api.gui), flags: 0, active: null, focus: null as Pointer, capture: null, menu: null, move: null, caret: null,
+        rect: { left: 0, top: 0, right: 0, bottom: 0 } };
+    if (!api.guiInfo(0, state) || !state.focus || (state.flags & 0x1e)) return true;
+    const handle = state.focus;
+    const count = api.user.func('int __stdcall GetClassNameW(void *, void *, int)')(handle, buffer, 512);
+    if (!count) return true;
+    const name = buffer.subarray(0, count * 2).toString('utf16le');
+    if (!/^(?:edit$|richedit|WindowsForms\d+\.EDIT(?:\.|$))/iu.test(name)) return false;
+    const style = Number(api.user.func('intptr_t __stdcall GetWindowLongPtrW(void *, int)')(handle, -16));
+    return style === 0 || Boolean(style & 0x20);
+}
 
 function paste(): void {
     const api = windows();
@@ -32,7 +50,7 @@ export function captureWindowsInput(): CapturedInput {
     try {
         const api = windows(), ax = automation(), window = api.foreground(), element = keep(ax.focused());
         if (!window || !element) return { reason: 'No focused input detected.' };
-        if (ax.integer(element, 35) !== 0 || ax.integer(element, 28) !== 1 || ax.integer(element, 26) !== 1 || ![50004, 50030].includes(ax.integer(element, 21) || 0)) return { reason: 'No editable text input detected.' };
+        if (ax.integer(element, 35) !== 0 || nativeInputBlocked() || ax.integer(element, 28) !== 1 || ax.integer(element, 26) !== 1 || ![50004, 50030].includes(ax.integer(element, 21) || 0)) return { reason: 'No editable text input detected.' };
         const text = keep(ax.pattern(element, 10014)), value = keep(ax.pattern(element, 10002));
         if (!text) return { reason: 'The input selection could not be verified. Text will be copied.' };
         const range = keep(ax.selection(text)), document = keep(outPointer(text, 7));
@@ -55,11 +73,14 @@ export function captureWindowsInput(): CapturedInput {
                 try {
                     const unchanged = () => {
                         if (api.foreground() !== window) return fail('The foreground app changed during processing.');
-                        if (ax.integer(element, 35) !== 0 || ax.integer(element, 28) !== 1 || ax.integer(element, 26) !== 1 ||
+                        if (ax.integer(element, 35) !== 0 || nativeInputBlocked() || ax.integer(element, 28) !== 1 || ax.integer(element, 26) !== 1 ||
                             ![50004, 50030].includes(ax.integer(element, 21) || 0) ||
                             (value ? ax.integer(value, 5) !== 0 : !ax.rangeWritable(range))) return fail('The input is no longer editable.');
                         const focused = ax.focused();
-                        try { if (!focused || !ax.equal(element, focused)) return fail('The focused input changed during processing.'); }
+                        try {
+                            if (!focused || !ax.equal(element, focused)) return fail('The focused input changed during processing.');
+                            if (ax.integer(focused, 35) !== 0 || nativeInputBlocked()) return fail('The input is now protected.');
+                        }
                         finally { release(focused); }
                         const current = ax.selection(text);
                         try { if (!current || !ax.sameRange(range, current)) return fail('The text selection changed during processing.'); }

@@ -32,7 +32,7 @@ function Invoke-Checked([string]$Command, [string[]]$Arguments) {
 function Test-Node([string]$Executable) {
     if (-not $Executable) { return $false }
     try {
-        & $Executable -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)" 2>$null
+        & $Executable -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(process.arch==='x64'&&(a>22||(a===22&&b>=18))?0:1)" 2>$null
         return $LASTEXITCODE -eq 0
     } catch { return $false }
 }

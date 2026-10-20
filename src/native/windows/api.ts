@@ -13,7 +13,9 @@ function load() {
     const point = koffi.struct({ x: 'int32', y: 'int32' });
     const rect = koffi.struct({ left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
     const message = koffi.struct({ hwnd: 'void *', message: 'uint32', wParam: 'uintptr_t', lParam: 'intptr_t', time: 'uint32', pt: point, private: 'uint32' });
-    return { user, kernel, point, rect, message,
+    const gui = koffi.struct({ size: 'uint32', flags: 'uint32', active: 'void *', focus: 'void *', capture: 'void *', menu: 'void *', move: 'void *', caret: 'void *', rect });
+    return { user, kernel, point, rect, message, gui,
+        guiInfo: user.func('GetGUIThreadInfo', 'int', ['uint32', koffi.inout(koffi.pointer(gui))]),
         error: kernel.func('uint32 __stdcall GetLastError()'),
         foreground: user.func('void * __stdcall GetForegroundWindow()'),
         keyState: user.func('int16 __stdcall GetAsyncKeyState(int)'),

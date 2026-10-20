@@ -76,7 +76,7 @@ process.on('message',m=>{
  if(m.type==='password')send(edit,0xcc,42,0);
  if(m.type==='change')user.func('int __stdcall SetWindowTextW(void *,str16)')(edit,m.text);
  const b=Buffer.alloc(20000);user.func('int __stdcall GetWindowTextW(void *,void *,int)')(edit,b,10000);
- process.send({text:b.toString('utf16le').split('\\0')[0],window:String(window)});
+ process.send({text:b.toString('utf16le').split('\\0')[0],window:String(window),password:Number(send(edit,0xd2,0,0))});
 });
 process.on('disconnect',()=>{clearInterval(timer);user.func('int __stdcall DestroyWindow(void *)')(window);process.exit(0);});
 process.send({ready:true});
@@ -105,7 +105,8 @@ process.send({ready:true});
             for (const changed of ['blur', 'change', 'selection', 'readonly', 'password']) {
                 await request({ type: 'prepare', text: 'Before selected after', start: 7, end: 15, singleLine: changed === 'password' }); await delay(60);
                 const target = captureWindowsInput(); assert.ok(target.target, target.reason);
-                await request({ type: changed, text: 'New manual text' });
+                const changedInput = await request({ type: changed, text: 'New manual text' });
+                if (changed === 'password') assert.equal(changedInput.password, 42, 'The fixture must really enable password masking');
                 try { assert.equal(await target.target.insert('Must not appear'), false, changed + ' must prevent insertion'); }
                 finally { target.target.close(); }
                 assert.doesNotMatch((await request({ type: 'read' })).text, /Must not appear/);
