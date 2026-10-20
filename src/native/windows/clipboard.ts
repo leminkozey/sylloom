@@ -15,6 +15,7 @@ function load() {
         empty: api.user.func('int __stdcall EmptyClipboard()'), get: api.user.func('void * __stdcall GetClipboardData(uint32)'),
         set: api.user.func('void * __stdcall SetClipboardData(uint32, void *)'), formats: api.user.func('uint32 __stdcall EnumClipboardFormats(uint32)'),
         sequence: api.user.func('uint32 __stdcall GetClipboardSequenceNumber()'),
+        clipboardOwner: api.user.func('void * __stdcall GetClipboardOwner()'),
         alloc: api.kernel.func('void * __stdcall GlobalAlloc(uint32, size_t)'), lock: api.kernel.func('void * __stdcall GlobalLock(void *)'),
         unlock: api.kernel.func('int __stdcall GlobalUnlock(void *)'), free: api.kernel.func('void * __stdcall GlobalFree(void *)'),
         duplicate: ole.func('void * __stdcall OleDuplicateData(void *, uint16, uint32)'),
@@ -66,15 +67,22 @@ export function temporaryWindowsClipboard(text: string) {
                 if (!handle) throw new Error('A clipboard format could not be preserved.');
                 previous.push({ format, handle });
             }
-            put(text, api); sequence = api.sequence();
+            put(text, api);
         });
+        // Closing publishes the completed set of formats. Capture the revision
+        // afterwards; a revision read while still writing can already be stale
+        // by the first paste/restore check on Windows.
+        sequence = native().sequence();
     } catch (error) { previous.forEach(freeEntry); throw error; }
     return {
-        isCurrent: () => !disposed && native().sequence() === sequence,
+        isCurrent: () => {
+            if (disposed || native().sequence() !== sequence) return false;
+            return within(api => api.sequence() === sequence && api.clipboardOwner() === api.owner);
+        },
         restore() {
             if (disposed || native().sequence() !== sequence) return;
             within(api => {
-                if (api.sequence() !== sequence) return;
+                if (api.sequence() !== sequence || api.clipboardOwner() !== api.owner) return;
                 if (!api.empty()) throw new Error('Could not restore the previous clipboard.');
                 for (const entry of previous) {
                     if (!api.set(entry.format, entry.handle)) throw new Error('Could not restore a clipboard format.');

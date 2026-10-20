@@ -62,8 +62,13 @@ export class WindowsAutomation {
     }
     focused(): ComPointer | undefined { return outPointer(this.client, 8); }
     root(): ComPointer | undefined { return outPointer(this.client, 5); }
-    child(element: ComPointer): ComPointer | undefined { return outPointer(this.walker, 4, ['void *'], element); }
-    sibling(element: ComPointer): ComPointer | undefined { return outPointer(this.walker, 6, ['void *'], element); }
+    private navigate(element: ComPointer, slot: number): ComPointer | undefined {
+        const result: unknown[] = [null];
+        if (com(this.walker, slot, ['void *', '_Out_ void **'], element, result) < 0) throw new Error('Windows control-tree traversal is unavailable.');
+        return result[0] ? result[0] as ComPointer : undefined;
+    }
+    child(element: ComPointer): ComPointer | undefined { return this.navigate(element, 4); }
+    sibling(element: ComPointer): ComPointer | undefined { return this.navigate(element, 6); }
     pattern(element: ComPointer, id: number): ComPointer | undefined {
         const iid = id === 10014 ? '{32eba289-3583-42c9-9c59-3b6d9a1e9b6a}' : id === 10002 ? '{a94cd8b1-0844-4cd6-9d2d-640537ab39e9}' : undefined;
         return iid ? outPointer(element, 14, ['int32', 'void *'], id, this.guid(iid)) : undefined;

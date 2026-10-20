@@ -117,7 +117,9 @@ process.send({ready:true});
             try { const handle = get(13), pointer = lock(handle); assert.ok(pointer); try { return koffi.decode.string16(pointer); } finally { unlock(handle); } }
             finally { close(); }
         };
+        copyWindowsText('Sylloom synthetic clipboard fixture');
         current = temporaryWindowsClipboard('Temporary Unicode: ä, 世界');
+        assert.ok(current.isCurrent(), 'The published clipboard transaction must still own its revision');
         assert.equal(readText(), 'Temporary Unicode: ä, 世界'); current.restore(); current.dispose();
         assert.equal(readText(), 'Sylloom synthetic clipboard fixture');
         current = temporaryWindowsClipboard('Temporary again'); copyWindowsText('New user clipboard'); current.restore(); current.dispose();

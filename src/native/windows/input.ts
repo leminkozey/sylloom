@@ -75,7 +75,9 @@ export function captureWindowsInput(): CapturedInput {
                     const clipboard = temporaryWindowsClipboard(content);
                     let posted = false, inserted = false;
                     try {
-                        signal?.throwIfAborted(); if (!clipboard.isCurrent() || !unchanged()) return false;
+                        signal?.throwIfAborted();
+                        if (!clipboard.isCurrent()) return fail('The clipboard changed before pasting.');
+                        if (!unchanged()) return false;
                         // Ctrl+V only. No Enter, Send or focus-changing command.
                         paste(); posted = true;
                         const expected = (before.slice(0, location) + content + before.slice(location + length)).replace(/\r\n/gu, '\n');
