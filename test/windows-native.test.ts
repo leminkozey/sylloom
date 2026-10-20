@@ -53,8 +53,9 @@ const create=user.func('void * __stdcall CreateWindowExW(uint32,str16,str16,uint
 const send=user.func('intptr_t __stdcall SendMessageW(void *,uint32,uintptr_t,intptr_t)');
 const instance=kernel.func('void * __stdcall GetModuleHandleW(str16)')(null);
 const window=create(0,'STATIC','Sylloom synthetic input',0x10cf0000,100,100,520,260,null,null,instance,null);
-const edit=create(0,'EDIT','',0x50811044,10,10,470,100,window,null,instance,null);
+const multiline=create(0,'EDIT','',0x50811044,10,10,470,100,window,null,instance,null);
 const other=create(0,'EDIT','',0x50810000,10,130,470,30,window,null,instance,null);
+let edit=multiline;
 if(!window||!edit||!other)throw Error('Could not create the native input fixture.');
 const point=koffi.struct({x:'int32',y:'int32'});
 const msg=koffi.struct({hwnd:'void *',message:'uint32',wParam:'uintptr_t',lParam:'intptr_t',time:'uint32',pt:point,private:'uint32'});
@@ -62,6 +63,7 @@ const peek=user.func('PeekMessageW','int',[koffi.out(koffi.pointer(msg)),'void *
 const timer=setInterval(()=>{const m={};for(let i=0;i<64&&peek(m,null,0,0,1);i++){const b=Buffer.alloc(koffi.sizeof(msg));koffi.encode(b,msg,m);user.func('int __stdcall TranslateMessage(void *)')(b);user.func('intptr_t __stdcall DispatchMessageW(void *)')(b);}},10);
 process.on('message',m=>{
  if(m.type==='prepare'){
+  edit=m.singleLine?other:multiline;
   send(edit,0xcf,0,0); send(edit,0xcc,0,0);
   user.func('int __stdcall SetWindowTextW(void *,str16)')(edit,m.text);
   send(edit,0xb1,m.start,m.end);
@@ -97,14 +99,14 @@ process.send({ready:true});
             if (String(foreground) !== fixture.window) { context.skip('This runner has no interactive foreground desktop. Test real insertion on a Windows desktop.'); return; }
             const captured = captureWindowsInput(); assert.ok(captured.target, captured.reason);
             try {
-                assert.equal(await captured.target.insert('Grüße, 世界'), true, captured.target.reason);
-                assert.equal((await request({ type: 'read' })).text, 'Before Grüße, 世界 after');
+                assert.equal(await captured.target.insert('Grüße,\n世界'), true, captured.target.reason);
+                assert.equal((await request({ type: 'read' })).text.replace(/\r\n/gu, '\n'), 'Before Grüße,\n世界 after');
             } finally { captured.target.close(); }
             for (const changed of ['blur', 'change', 'selection', 'readonly', 'password']) {
-                await request({ type: 'prepare', text: 'Before selected after', start: 7, end: 15 }); await delay(60);
+                await request({ type: 'prepare', text: 'Before selected after', start: 7, end: 15, singleLine: changed === 'password' }); await delay(60);
                 const target = captureWindowsInput(); assert.ok(target.target, target.reason);
                 await request({ type: changed, text: 'New manual text' });
-                try { assert.equal(await target.target.insert('Must not appear'), false); }
+                try { assert.equal(await target.target.insert('Must not appear'), false, changed + ' must prevent insertion'); }
                 finally { target.target.close(); }
                 assert.doesNotMatch((await request({ type: 'read' })).text, /Must not appear/);
             }
@@ -122,6 +124,8 @@ process.send({ready:true});
         assert.ok(current.isCurrent(), 'The published clipboard transaction must still own its revision');
         assert.equal(readText(), 'Temporary Unicode: ä, 世界'); current.restore(); current.dispose();
         assert.equal(readText(), 'Sylloom synthetic clipboard fixture');
+        current = temporaryWindowsClipboard('First line\nSecond line');
+        assert.equal(readText(), 'First line\r\nSecond line'); current.restore(); current.dispose();
         current = temporaryWindowsClipboard('Temporary again'); copyWindowsText('New user clipboard'); current.restore(); current.dispose();
         assert.equal(readText(), 'New user clipboard', 'Do not overwrite a newer clipboard item');
     } finally {

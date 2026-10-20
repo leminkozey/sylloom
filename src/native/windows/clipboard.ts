@@ -30,7 +30,9 @@ function within<T>(work: (api: ReturnType<typeof load>) => T): T {
     try { return work(api); } finally { api.close(); }
 }
 function put(text: string, api: ReturnType<typeof load>): void {
-    const content = Buffer.from(text + '\0', 'utf16le'), memory = api.alloc(2, content.length);
+    // CF_UNICODETEXT uses CRLF, including for multiline lists and emails copied
+    // from Sylloom's LF-based Markdown. Keep stored transcripts unchanged.
+    const content = Buffer.from(text.replace(/\r\n?|\n/gu, '\r\n') + '\0', 'utf16le'), memory = api.alloc(2, content.length);
     if (!memory) throw new Error('Could not allocate clipboard memory.');
     let transferred = false;
     try {
@@ -63,6 +65,9 @@ export function temporaryWindowsClipboard(text: string) {
         within(api => {
             for (let format = api.formats(0); format; format = api.formats(format)) {
                 if (previous.length >= 128) throw new Error('Too many clipboard formats to preserve safely.');
+                // These formats have owner-managed lifetimes. A hidden text
+                // owner cannot safely take over their rendering/free callbacks.
+                if (format === 0x80 || (format >= 0x200 && format <= 0x3ff)) throw new Error('A clipboard format requires its original owner. Text will be copied instead.');
                 const source = api.get(format), handle = source && api.duplicate(source, format, 2) as Pointer;
                 if (!handle) throw new Error('A clipboard format could not be preserved.');
                 previous.push({ format, handle });
