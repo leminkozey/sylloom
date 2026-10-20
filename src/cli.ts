@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { isDesktop, ALT_KEY } from './platform.js';
+import { processCommand } from './process-command.js';
 import { Command, Option } from 'commander';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -78,8 +80,8 @@ const program = new Command().name('sylloom').description("Local dictation, audi
 program.action(() => locked(async () => mainMenu(await settings())));
 
 program.command('install').description('Install the global sylloom command for this user')
-    .option('--bin-dir <directory>', 'Command directory; defaults to ~/.local/bin')
-    .option('--no-path', 'Leave shell configuration unchanged')
+    .option('--bin-dir <directory>', 'Command directory; defaults to the per-user command directory')
+    .option('--no-path', 'Leave PATH configuration unchanged')
     .action(async options => {
         const result = await installCommand({ binDirectory: options.binDir, configurePath: options.path });
         process.stdout.write('Command installed: ' + result.command + '\n');
@@ -128,7 +130,7 @@ program.command('dictate').description("Dictate from any app, format locally and
             if (service.hotkeyError) throw new Error(service.hotkeyError);
             await bridge.start();
             service.on('update', () => process.stderr.write(service.message + '\n'));
-            process.stderr.write("Global shortcuts ready: " + DICTATION_SHORTCUT + " Start/stop · Ctrl+Option+Esc Cancel · Ctrl+C Quit\n");
+            process.stderr.write("Global shortcuts ready: " + DICTATION_SHORTCUT + " Start/stop · Ctrl+" + ALT_KEY + "+Esc Cancel · Ctrl+C Quit\n");
             timer = setInterval(() => {}, 1000);
             await stopped;
         } finally {
@@ -359,7 +361,10 @@ program.command('doctor').description("Check audio backends, devices and local m
     const audio = new Audio();
     try {
         const capabilities = await audio.capabilities();
-        const binaryAvailable = (binary: string) => !spawnSync(binary, ['--version'], { timeout: 10_000, stdio: 'ignore' }).error;
+        const binaryAvailable = (binary: string) => {
+            const result = spawnSync(...processCommand(binary, ['--help']), { windowsHide: true, timeout: 10_000, stdio: 'ignore' });
+            return !result.error && result.status === 0;
+        };
         const report: Record<string, unknown> = {
             version, platform: process.platform, arch: process.arch, data: home,
             mic: capabilities.sources.mic, system: capabilities.sources.system,
@@ -369,7 +374,7 @@ program.command('doctor').description("Check audio backends, devices and local m
             noteBackend: config.llm, llmBinary: binaryAvailable(config.llmBinary), llmModel: existsSync(config.llmModel),
             dictationModel: existsSync(config.dictationModel), selectedFormatter: path.basename(config.dictationModel), dictationFormat: config.dictationFormat,
             dictationWhisperModel: path.basename(dictationConfig(config).whisperModel), dictationPolish: config.dictationPolish, dictationWarmSeconds: config.dictationWarmSeconds,
-            dictationShortcut: process.platform === 'darwin' ? DICTATION_SHORTCUT : "macOS only",
+            dictationShortcut: isDesktop ? DICTATION_SHORTCUT : 'Unsupported platform',
             dictationAutoInsert: config.dictationAutoInsert, accessibility: accessibilityStatus(),
         };
         try { report.devices = await audio.devices(); } catch (error) { report.devicesError = errorMessage(error); }

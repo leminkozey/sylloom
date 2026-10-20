@@ -27,7 +27,9 @@ repositories or change parent-workspace remotes.
 - Insights stay local. Sharing opens a reviewed X draft with aggregate counts only;
   never include transcript text, app context or automatically publish a post.
 - Audio is transcribed only after capture stops.
-- Global shortcuts use macOS Carbon through Koffi. Do not log unrelated keys.
+- Global shortcuts use macOS Carbon or Windows RegisterHotKey through Koffi. Do not log unrelated keys.
+- Windows targets Windows 11 x64 on CPU. Keep native DLL loading lazy and isolated
+  from macOS. Windows setup is per-user and must not require admin access.
 - The floating dictation indicator shows only a waveform inside a compact bubble,
   with the same liquid entry/exit as call popups. No labels, buttons or timer;
   preserve keyboard focus and click-through behavior. Respect Reduce Motion.

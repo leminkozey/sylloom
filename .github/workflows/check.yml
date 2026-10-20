@@ -4,7 +4,11 @@ permissions:
   contents: read
 jobs:
   check:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,4 +23,25 @@ jobs:
       - run: npm run build
       - run: npm run site:build
       - run: npm run release:check
-      - run: bash -n install.sh
+      - if: runner.os == 'macOS'
+        run: bash -n install.sh
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null; $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count) { throw ($errors | Out-String) }
+          .\sylloom.cmd --version
+          if ($LASTEXITCODE -ne 0) { throw 'Windows entrypoint failed.' }
+      - if: runner.os == 'Windows'
+        name: Install and verify official CPU runtimes
+        shell: powershell
+        env:
+          SYLLOOM_HOME: ${{ runner.temp }}\sylloom-install-check
+          SYLLOOM_GITHUB_TOKEN: ${{ github.token }}
+        run: .\install.ps1 -SkipModels -NoLink
+      - if: runner.os == 'Windows'
+        name: Native Windows smoke tests
+        env:
+          SYLLOOM_TEST_WINDOWS: '1'
+        run: npx tsx --test test/windows-native.test.ts

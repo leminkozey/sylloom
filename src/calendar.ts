@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { windowsCalendar } from './native/windows/calendar.js';
 import ICAL from 'ical.js';
 import { atomicJson, home } from './store.js';
 import { cleanText, errorMessage } from './types.js';
@@ -123,6 +124,7 @@ function run(args) {
 }`;
 
 async function appCalendar(source: 'outlook' | 'system', from: string, to: string, request = false, signal?: AbortSignal): Promise<{ events: CalendarEvent[]; status: CalendarStatus }> {
+    if (process.platform === 'win32') return windowsCalendar(source, from, to, signal);
     if (process.platform !== 'darwin') return { events: [], status: { source, state: 'unavailable', message: 'Native calendar access requires macOS.' } };
     try {
         const { stdout } = await exec('/usr/bin/osascript', ['-l', 'JavaScript', '-e', source === 'outlook' ? outlookScript : systemScript, from, to, request ? 'request' : 'read'], { timeout: request ? 25000 : 8000, maxBuffer: 2 * 1024 ** 2, signal });

@@ -1,12 +1,15 @@
 import koffi from 'koffi';
 import { initializeAppKit } from './native/app-kit.js';
+import { registerWindowsHotkeys } from './native/windows/hotkey.js';
+import { ALT_KEY } from './platform.js';
 
-export const DICTATION_SHORTCUT = 'Ctrl+Option+Space';
-export const COPY_SHORTCUT = 'Ctrl+Option+C';
+export const DICTATION_SHORTCUT = 'Ctrl+' + ALT_KEY + '+Space';
+export const COPY_SHORTCUT = 'Ctrl+' + ALT_KEY + '+C';
 
 // Carbon registers specific shortcuts without monitoring unrelated keystrokes.
 // All calls stay on Node's main thread, as required by HIToolbox.
 export function registerHotkeys(toggle: () => void, cancel: () => void, copy?: () => void): () => void {
+    if (process.platform === 'win32') return registerWindowsHotkeys(toggle, cancel, copy);
     if (process.platform !== 'darwin') throw new Error("Global shortcuts currently require macOS.");
     initializeAppKit();
     const carbon = koffi.load('/System/Library/Frameworks/Carbon.framework/Carbon');

@@ -1,3 +1,5 @@
+import { DICTATION_SHORTCUT } from './hotkey.js';
+import { PASTE_SHORTCUT } from './platform.js';
 import { existsSync } from 'node:fs';
 import { manageSettings } from './settings-ui.js';
 import { readFile } from 'node:fs/promises';
@@ -134,7 +136,7 @@ export async function documentMenu(screen: Screen, session: Session, config: Set
             }
             if (selected === 'copy') {
                 await copyText(await readFile(documentPath(session, kind), 'utf8'));
-                await screen.notice("Copied", "Markdown copied. Paste with Cmd+V.");
+                await screen.notice("Copied", 'Markdown copied. Paste with ' + PASTE_SHORTCUT + '.');
             }
             if (selected === 'export') {
                 const formats: Choice[] = [];
@@ -243,7 +245,7 @@ export async function mainMenu(config: Settings): Promise<void> {
             const revision = ui.bridge.revision;
             const selected = await screen.select("Capture meetings locally", () => choices([
                 [ui.bridge.recording ? 'recording-controls' : pending ? 'finish' : catalog.issues.length ? 'recovery' : 'record', ui.bridge.recording ? 'Recording controls' : pending ? "Finish pending recording" : catalog.issues.length ? 'Review unreadable recording' : "Start recording", catalog.issues.length ? 'Metadata needs attention. Dictation remains available.' : pending?.name || "Microphone and system audio, recorded separately."],
-                ['dictation', "Dictation", "Ctrl+Option+Space in any app. Format, insert or copy, and save locally."],
+                ['dictation', "Dictation", DICTATION_SHORTCUT + ' in any app. Format, insert or copy, and save locally.'],
                 ['library', 'Library', 'Search notes, recordings and every dictation. Pin what matters.'],
                 ['insights', 'Insights', 'Daily activity, streaks, spoken words and WPM.'],
                 ['recovery', 'Storage and recovery', 'Saved audio, interrupted captures, models and available space.'],

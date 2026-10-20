@@ -3,14 +3,15 @@
 <p align="center">Speak freely. Keep the words.</p>
 
 Local dictation, meeting recording and structured notes from your terminal.
-Built with TypeScript for macOS on Apple Silicon. No Python runtime or cloud API.
+Built with TypeScript for macOS on Apple Silicon and Windows 11 x64 (beta).
+No Python runtime or cloud API.
 
 > Sylloom started as a one-day project to solve my own need for local dictation
 > and meeting notes. I'm sharing it in case it helps someone else. I may leave
 > it unmaintained at any time; ongoing support and updates aren't guaranteed.
 > Feel free to use it, change it or fork it.
 
-- **Dictate from any app.** Press Ctrl+Option+Space, speak, then press it again. Text is inserted into the focused input, or copied for Cmd+V.
+- **Dictate from any app.** Press Ctrl+Option+Space on Mac or Ctrl+Alt+Space on Windows, speak, then press it again. Text is inserted into a verified focused input, or copied for pasting.
 - **Record meetings.** Capture microphone and system audio separately, with device switching, pause and mute controls.
 - **Choose what to keep.** Name each meeting and explicitly choose whether to keep a transcript, generate a note or delete the text.
 - **Read and export.** Render Markdown in the terminal, open a local browser view, and export Markdown or HTML.
@@ -19,6 +20,11 @@ The terminal interface is adapted from [velora-cli by Themistic](https://github.
 Sylloom has its own waveform mark. See [design provenance](DESIGN.md) and [third-party notices](NOTICE.md).
 
 ## Install
+
+Choose the installer for your operating system. Both keep existing recordings,
+settings and selected models. Windows setup and verification are described below.
+
+### macOS
 
 Requires an Apple Silicon Mac, macOS 14.4 or later, and at least 10 GiB of free
 space for models, downloads and dependencies. 16 GiB of RAM is recommended.
@@ -52,6 +58,53 @@ missing from your shell PATH.
 ./install.sh --no-path         # Install the command without editing shell startup files
 ./install.sh --help
 ```
+
+### Windows 11 x64 (CPU beta)
+
+Clone or download the repository, open PowerShell in its directory, and run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+.\sylloom.cmd
+```
+
+The installer obtains Node.js 24 if necessary, official CPU builds of
+`whisper-server` and `llama-server`, dependencies and the same four local models.
+Runtime archives and model downloads are checked against publisher SHA-256 values.
+It preserves each runtime's DLL bundle and saves its location in local settings.
+Node and the global command are installed for the current user under
+`%LOCALAPPDATA%\Sylloom`; runtime bundles and models stay in the data directory.
+The installer and launcher run without admin rights. No Python, extension, audio
+driver or GPU is required. The official native bundles need the
+[Microsoft Visual C++ x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist),
+which may already be installed; missing runtime/DLL support is reported during
+setup. About 10 GiB of free disk space and 16 GiB RAM are recommended; CPU
+processing speed varies.
+
+Open a **new terminal** after setup, then use `sylloom` from any directory. Keep
+the source directory in place. `-NoPath` leaves the user PATH unchanged; `-NoLink`
+skips the global command. These flags also work with the command above:
+
+```powershell
+.\install.ps1 -Check           # Inspect requirements without installing
+.\install.ps1 -DictationOnly   # Download only Turbo and the formatter
+.\install.ps1 -SkipModels      # Install/build without model downloads
+.\install.ps1 -SkipRuntimes    # Require existing native runtimes
+```
+
+Allow **microphone access for desktop apps** in Windows Settings. Global shortcuts
+use Ctrl+Alt+Space to start/stop, Ctrl+Alt+Esc to cancel and Ctrl+Alt+C to copy the
+latest dictation. Automatic insertion requires an editable UI Automation text
+control with a verifiable selection. Password fields, changed inputs, elevated
+apps and unsupported controls use clipboard fallback with Ctrl+V. Sylloom never
+presses Enter or sends a message.
+
+Call observation checks supported native Teams, WhatsApp and Phone Link app
+controls, plus the optional local Teams API. Ringing detection depends on what
+that app exposes. Missing signals keep an existing recording running. Outlook
+reminders read the **running classic Outlook** default calendar through local COM;
+New Outlook requires a local `.ics` export. The Teams token stays in Windows
+Credential Manager. See [Windows verification and limits](WINDOWS.md).
 
 For an already built checkout, register or repair the global command without
 reinstalling dependencies or downloading models:
@@ -510,13 +563,17 @@ data/
 
 Set `SYLLOOM_HOME=/your/chosen/directory` before starting to move local data.
 `MEETING_HOME` remains a compatibility alias. Existing settings are preserved.
-Recordings and transcripts are not uploaded. Installation contacts Homebrew, npm
-and the model repositories to obtain dependencies and weights. Storage uses
-restrictive permissions, without additional application-level encryption.
+Recordings and transcripts are not uploaded. Installation contacts Homebrew on
+Mac, Node.js and GitHub on Windows, npm and the model repositories to obtain
+dependencies and weights. POSIX storage uses restrictive permissions; Windows
+storage inherits its containing directory's NTFS permissions. There is no
+additional application-level encryption.
 Global hotkeys register specific combinations; they do not log other keystrokes.
 
-Current limits: macOS on Apple Silicon is the tested platform; Windows and Linux
-are not supported releases. No speaker identification, acoustic echo cancellation
+Current limits: macOS on Apple Silicon is the live-tested platform. Windows 11
+x64 CPU support is beta and still needs real-device audio, insertion and call
+acceptance; CI smoke tests do not replace that. Linux is unsupported.
+No speaker identification, acoustic echo cancellation
 or guaranteed gapless device switching. WAV tracks are limited to about 37 hours.
 Dictation formatting is limited to 12,000 characters and 24 paragraphs.
 Recognition and cleanup can still mishear names or numbers. Review the result

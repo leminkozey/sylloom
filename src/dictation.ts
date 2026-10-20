@@ -1,3 +1,4 @@
+import { ALT_KEY, PASTE_SHORTCUT } from './platform.js';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
@@ -101,8 +102,8 @@ export class DictationService extends EventEmitter {
     get busy(): boolean { return ['starting', 'recording', 'processing'].includes(this.state); }
     get status(): string {
         const elapsed = this.current ? timestamp((Date.now() - Date.parse(this.current.startedAt)) / 1000) : '';
-        if (this.state === 'recording') return "● DICTATION " + elapsed + ' · ' + DICTATION_SHORTCUT + " Stop · Ctrl+Option+Esc Cancel";
-        if (this.busy) return this.message + ' · Ctrl+Option+Esc Cancel';
+        if (this.state === 'recording') return "● DICTATION " + elapsed + ' · ' + DICTATION_SHORTCUT + ' Stop · Ctrl+' + ALT_KEY + '+Esc Cancel';
+        if (this.busy) return this.message + ' · Ctrl+' + ALT_KEY + '+Esc Cancel';
         return this.message + ' · ' + (!this.config.globalShortcuts ? 'Global shortcuts Off' : this.hotkeyError ? "Shortcut unavailable" : DICTATION_SHORTCUT);
     }
     listen(): void {
@@ -112,7 +113,7 @@ export class DictationService extends EventEmitter {
             () => { void this.cancel().catch(error => this.reportError(error)); },
             this.config.copyLatestShortcut ? () => { void this.copyLatest().catch(error => notify(errorMessage(error))); } : undefined); }
         catch (error) { this.hotkeyError = errorMessage(error); this.update('error', this.hotkeyError, true); }
-        if (process.platform === 'darwin' && this.config.dictationIndicator) this.closeIndicator = attachIndicator(this, message => notify(message));
+        if (['darwin', 'win32'].includes(process.platform) && this.config.dictationIndicator) this.closeIndicator = attachIndicator(this, message => notify(message));
         void this.prewarm();
     }
     async prewarm(): Promise<void> {
@@ -231,7 +232,7 @@ export class DictationService extends EventEmitter {
     }
     private deliveryReady(item: Dictation): void {
         this.update('ready', item.delivery?.kind === 'inserted' ? 'Inserted · ' + item.text!.length + ' characters · Saved in Library' :
-            'Copied · Paste with Cmd+V · Saved in Library', true);
+            'Copied · Paste with ' + PASTE_SHORTCUT + ' · Saved in Library', true);
     }
     async retry(item: Dictation, format = item.format, retranscribe = false): Promise<void> {
         return this.reprocess(item, format, { retranscribe });
@@ -290,7 +291,7 @@ export class DictationService extends EventEmitter {
         if (this.busy) throw new Error("Stop or cancel dictation first.");
         await copyText((raw ? item.raw : item.text) || '');
         item.copiedAt = new Date().toISOString(); await save(item);
-        if (!this.busy && !this.closing) this.update('ready', "Copied · Paste with Cmd+V", true);
+        if (!this.busy && !this.closing) this.update('ready', 'Copied · Paste with ' + PASTE_SHORTCUT, true);
     }
     async edit(item: Dictation, text: string): Promise<void> {
         if (this.busy || this.blocked() || this.closing) throw new Error('Finish the active recording or processing task first.');

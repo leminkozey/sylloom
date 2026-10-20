@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import { processCommand } from './process-command.js';
 
 export type ModelServerOptions = { contextSize?: number; profile?: 'dictation' };
 
@@ -20,7 +21,7 @@ const capabilities = new Map<string, Promise<string>>();
 function runtimeCapabilities(binary: string): Promise<string> {
     let help = capabilities.get(binary);
     if (!help) {
-        help = execute(binary, ['--help'], { timeout: 3000, maxBuffer: 1024 * 1024, encoding: 'utf8' })
+        help = execute(...processCommand(binary, ['--help']), { windowsHide: true, timeout: 3000, maxBuffer: 1024 * 1024, encoding: 'utf8' })
             .then(result => result.stdout + result.stderr).catch(() => '');
         capabilities.set(binary, help);
     }

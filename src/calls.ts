@@ -8,10 +8,11 @@ import { version } from './brand.js';
 import { normalizeEvent } from './calendar.js';
 import type { CalendarEvent } from './calendar.js';
 import type { Settings } from './types.js';
+import { CALL_APPLE_LABEL } from './platform.js';
 
 export type CallState = ObservedCallState;
 export type CallSnapshot = { state: CallState; source: string; message: string; since: string; callId: number; accessibility: boolean; app?: CallApp };
-const labels: Record<CallApp, string> = { teams: 'Teams', apple: 'FaceTime / iPhone', whatsapp: 'WhatsApp' };
+const labels: Record<CallApp, string> = { teams: 'Teams', apple: CALL_APPLE_LABEL, whatsapp: 'WhatsApp' };
 export function enabledCallApps(config: Settings): CallApp[] {
     return (['apple', 'whatsapp', 'teams'] as const).filter(app => config[app === 'apple' ? 'detectAppleCalls' : app === 'whatsapp' ? 'detectWhatsAppCalls' : 'detectTeamsCalls']);
 }
@@ -45,8 +46,8 @@ export class CallDetector extends EventEmitter {
         return Boolean(callId && call && (call.app !== 'teams' || this.teamsConfirmedCalls.has(callId)));
     }
     start(): void {
-        if (process.platform !== 'darwin') { this.setState('unknown', 'none', 'Local call detection currently requires macOS.'); return; }
-        initializeAppKit();
+        if (!['darwin', 'win32'].includes(process.platform)) { this.setState('unknown', 'none', 'Local call detection requires macOS or Windows.'); return; }
+        if (process.platform === 'darwin') initializeAppKit();
         let url = new URL('./app-observer-worker.js', import.meta.url);
         if (!existsSync(url)) url = new URL('./app-observer-worker.ts', import.meta.url);
         this.observer = new Worker(url, { stdout: true, stderr: true, execArgv: process.execArgv.filter(value => !value.startsWith('--input-type')) });
@@ -122,7 +123,7 @@ export class CallDetector extends EventEmitter {
             const endedApple = app === 'apple' && appleId && this.appleCallUISeen === appleId && data.appleCallUI === false && audio && !audio.input && !audio.output;
             // The Phone/FaceTime main window may show navigation while a separate
             // call panel is active. Its navigation is not proof of hangup.
-            const idle = (ax === 'idle' && !duplex && (app !== 'apple' || data.appleCallUI === false)) || endedApple;
+            const idle = (ax === 'idle' && !duplex && (app !== 'apple' || process.platform === 'win32' || data.appleCallUI === false)) || endedApple;
             const samples = idle ? (this.idleSamples.get(app) || 0) + 1 : 0;
             this.idleSamples.set(app, samples);
             const endedTeamsCall = app === 'teams' && this.apiEndedCall === this.states.get(app)?.callId && this.apiEndedCall !== undefined;
@@ -143,7 +144,7 @@ export class CallDetector extends EventEmitter {
             else if (duplex) this.setState('active', 'audio-activity', labels[app] + ' has an active microphone and output stream. Incoming/ringing is not confirmed.', app);
             else if (idle && samples >= 3 && (app !== 'teams' || this.canAutoStop(this.states.get(app)?.callId || 0))) this.setState('idle', 'accessibility', labels[app] + ' call ended: app controls and audio are inactive.', app);
             else if (app === 'teams' && this.apiState === 'idle' && !this.states.get(app)?.callId) this.setState('idle', 'local-api', 'Teams local API connected.', app);
-            else this.setState('unknown', 'accessibility', data.trusted ? 'Waiting for reliable ' + labels[app] + ' call signals.' : 'Enable Accessibility for the terminal running Sylloom.', app);
+            else this.setState('unknown', 'accessibility', data.trusted ? 'Waiting for reliable ' + labels[app] + ' call signals.' : process.platform === 'win32' ? 'Windows app controls are unavailable. Run Sylloom at the same privilege level as your call app.' : 'Enable Accessibility for the terminal running Sylloom.', app);
             if (app === 'apple' && data.appleCallUI && this.states.get('apple')?.callId) this.appleCallUISeen = this.states.get('apple')!.callId;
         }
     }

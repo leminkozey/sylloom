@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { audioActivity } from './audio-activity.js';
 import type { AudioActivity } from './audio-activity.js';
+import { observeWindowsApps } from './windows/app-reader.js';
 
 export type ObservedCallState = 'ringing' | 'joining' | 'active' | 'idle' | 'unknown';
 export type CallApp = 'teams' | 'apple' | 'whatsapp';
@@ -30,8 +31,8 @@ function controlLabel(value: string): string {
 export function notificationCallApp(identifier: string, appLabel = ''): CallApp | undefined {
     // Only stable bundle IDs or exact app-header labels establish provenance.
     // A message body mentioning Teams is not an app identity.
-    if (/^com\.microsoft\.teams2?(?:[.:/_-]|$)/i.test(identifier) || /^(?:Microsoft )?Teams(?: \(work or school\))?$/i.test(appLabel.trim())) return 'teams';
-    if (/^com\.apple\.(?:FaceTime|Phone)(?:[.:/_-]|$)/i.test(identifier) || /^(?:FaceTime|Phone)$/i.test(appLabel.trim())) return 'apple';
+    if (/^com\.microsoft\.teams2?(?:[.:/_-]|$)|^MSTeams_[\w]+!MSTeams$/i.test(identifier) || /^(?:Microsoft )?Teams(?: \(work or school\))?$/i.test(appLabel.trim())) return 'teams';
+    if (/^com\.apple\.(?:FaceTime|Phone)(?:[.:/_-]|$)/i.test(identifier) || /^(?:FaceTime|Phone|Phone Link|Smartphone-Link)$/i.test(appLabel.trim())) return 'apple';
     if (/^(?:net|com)\.whatsapp(?:[.:/_-]|$)/i.test(identifier) || /^WhatsApp$/i.test(appLabel.trim())) return 'whatsapp';
     return undefined;
 }
@@ -76,6 +77,7 @@ export function notificationCallTree(root: NotificationNode): { calls: Partial<R
 }
 const exec = promisify(execFile);
 export async function observeApps(readOutlook = true, enabled: CallApp[] = ['teams', 'apple', 'whatsapp']): Promise<AppObservation> {
+    if (process.platform === 'win32') return observeWindowsApps(enabled);
     if (process.platform !== 'darwin') return { trusted: false, teams: 'unknown' };
     // CallDetector initializes AppKit in the parent before creating this worker.
     // Direct diagnostic calls on the main thread still need that connection.

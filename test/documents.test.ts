@@ -20,6 +20,16 @@ const markdown = '# Prüfung München\n\n## Nächste Schritte\n\n- [ ] **Import 
     '| Aufgabe | Status |\n| --- | --- |\n| Oberfläche 界 👩‍💻 | Offen |\n\n' +
     '> Eine wichtige Entscheidung.\n\n```ts\nconst value = 42;\n```\n\n[Dokumentation](https://example.com/docs)\n';
 
+test('default exports avoid Windows devices and remain valid for long Unicode titles', () => {
+    const session = { id: randomUUID(), name: 'CON' } as Parameters<typeof exportName>[0];
+    assert.equal(exportName(session, 'note', 'md'), '_CON.md');
+    for (const name of ['NUL', 'aux.review', 'COM1', 'LPT¹']) {
+        assert.ok(exportName({ ...session, name }, 'note', 'html').startsWith('_'));
+    }
+    const file = exportName({ ...session, name: '界'.repeat(160) }, 'transcript', 'md');
+    assert.ok(Buffer.byteLength(file) <= 220); assert.ok(file.endsWith('-transcript.md'));
+});
+
 test('Markdown renders headings, tasks, nesting, tables and code within terminal columns', () => {
     const output = renderMarkdown(markdown, 32);
     const text = output.join('\n');

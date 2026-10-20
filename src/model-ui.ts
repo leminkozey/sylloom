@@ -50,7 +50,7 @@ async function sectionMenu(screen: Screen, config: Settings, section: Section): 
             { value: 'recommended', name: existsSync(bundled) ? 'Use recommended model' : 'Install recommended model · ' + section.size,
                 state: current === bundled && existsSync(bundled) ? 'Selected' : '',
                 hint: models[section.kind].label + (current === bundled && existsSync(bundled) ? ' · Selected' : '') },
-            { value: 'custom', name: 'Choose a custom model file…', hint: 'Select an existing compatible model on this Mac.' },
+            { value: 'custom', name: 'Choose a custom model file…', hint: 'Select an existing compatible model on this computer.' },
         ];
         if (section.kind === 'formatter' && !usingOllama) items.splice(1, 0, {
             value: 'quality', name: 'Use larger formatter · 2.6 GiB', state: current === path.join(modelDirectory, models['formatter-quality'].file) ? 'Selected' : '',

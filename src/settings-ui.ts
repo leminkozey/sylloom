@@ -1,3 +1,4 @@
+import { isWindows, ALT_KEY, CALL_APPLE_LABEL } from './platform.js';
 import { saveSettings } from './store.js';
 import { modelMenu } from './model-ui.js';
 import { bridgeMenu, outlookSourcesMenu, recoveryMenu } from './bridge-ui.js';
@@ -17,11 +18,11 @@ const groups = {
     dictation: { title: 'Dictation', switches: [
         { key: 'dictationAutoInsert', name: 'Insert into focused input', hint: 'Recheck focus before inserting. Copy to clipboard if insertion fails.' },
         { key: 'dictationIndicator', name: 'Floating waveform', hint: 'Show the waveform at the bottom of the screen while dictating.' },
-        { key: 'dictationNotifications', name: 'Dictation notifications', hint: 'Show macOS notifications for dictation results and processing errors.' },
+        { key: 'dictationNotifications', name: 'Dictation notifications', hint: 'Show desktop notifications for dictation results and processing errors.' },
     ] },
     shortcuts: { title: 'Global shortcuts', switches: [
-        { key: 'globalShortcuts', name: 'Global shortcuts', hint: 'Ctrl+Option+Space starts/stops dictation. Ctrl+Option+Esc cancels.' },
-        { key: 'copyLatestShortcut', name: 'Copy latest dictation', hint: 'Ctrl+Option+C copies the latest saved text. Requires global shortcuts On.' },
+        { key: 'globalShortcuts', name: 'Global shortcuts', hint: 'Ctrl+' + ALT_KEY + '+Space starts/stops dictation. Ctrl+' + ALT_KEY + '+Esc cancels.' },
+        { key: 'copyLatestShortcut', name: 'Copy latest dictation', hint: 'Ctrl+' + ALT_KEY + '+C copies the latest saved text. Requires global shortcuts On.' },
     ] },
     recording: { title: 'Recording', switches: [
         { key: 'callAutoStop', name: 'Stop when the call ends', hint: 'Stop a call-linked recording after confirmed hangup. A detector outage keeps it running.' },
@@ -43,9 +44,9 @@ export async function manageSettings(screen: Screen, config: Settings, devices: 
             { value: 'shortcuts', name: 'Global shortcuts', state: config.globalShortcuts ? 'On' : 'Off', hint: 'Dictate from any app and copy the latest result.' },
             { value: 'recording', name: 'Recording and audio', state: config.input === 'default' ? 'System default' : 'Custom input', hint: 'Microphone, system audio and automatic stop after calls.' },
             { value: 'calendar', name: 'Outlook meeting reminders', state: config.meetingReminders ? config.reminderMinutes + ' min before' : 'Off', hint: 'Teams reminders, lead time and local calendar connections.' },
-            { value: 'bridge', name: 'Call recording prompts', state: config.bridgeEnabled ? 'On' : 'Off', hint: 'FaceTime, iPhone, WhatsApp and Teams. App switches and the local Teams API credential.' },
+            { value: 'bridge', name: 'Call recording prompts', state: config.bridgeEnabled ? 'On' : 'Off', hint: CALL_APPLE_LABEL + ', WhatsApp and Teams. App switches and the local Teams API credential.' },
             { value: 'models', name: 'Models and performance', state: config.language === 'auto' ? 'Auto language' : config.language.toUpperCase(), hint: 'Choose local models, recognition language and how long models stay warm.' },
-            { value: 'permissions', name: 'Permissions', hint: 'Check Accessibility and open macOS privacy settings.' },
+            { value: 'permissions', name: 'Permissions', hint: isWindows ? 'Check UI Automation and open Windows microphone privacy settings.' : 'Check Accessibility and open macOS privacy settings.' },
             { value: 'storage', name: 'Storage and recovery', hint: 'Storage usage, pending recordings and interrupted dictations.' }, back,
         ], { back: true, initialValue: selected, detail: 'Choose a category. Current values appear on the right.' });
         if (['back', 'quit', 'settings'].includes(selected)) return;
@@ -57,11 +58,11 @@ export async function manageSettings(screen: Screen, config: Settings, devices: 
             if (selected === 'storage') await recoveryMenu(screen, config);
             if (selected === 'permissions') {
                 const action = await screen.select('Settings / Permissions', [
-                    { value: 'accessibility', name: 'Accessibility · ' + (accessibilityStatus() ? 'Allowed' : 'Required'), hint: 'Needed for automatic insertion and call controls in supported apps.' },
-                    { value: 'microphone', name: 'Microphone access' }, { value: 'system', name: 'Screen and system audio access' }, back,
-                ], { back: true, detail: 'Allow the terminal that runs Sylloom. Existing permissions remain under your control.' });
+                    { value: 'accessibility', name: (isWindows ? 'UI Automation · ' : 'Accessibility · ') + (accessibilityStatus() ? isWindows ? 'Available' : 'Allowed' : isWindows ? 'Unavailable' : 'Required'), hint: 'Needed for automatic insertion and call controls in supported apps.' },
+                    { value: 'microphone', name: 'Microphone access' }, ...(!isWindows ? [{ value: 'system', name: 'Screen and system audio access' }] : []), back,
+                ], { back: true, detail: isWindows ? 'Allow microphone access for desktop apps. Run Sylloom and target apps without elevation; protected inputs use clipboard fallback.' : 'Allow the terminal that runs Sylloom. Existing permissions remain under your control.' });
                 const targets: Record<string, string> = { accessibility: 'Privacy_Accessibility', microphone: 'Privacy_Microphone', system: 'Privacy_ScreenCapture' };
-                if (targets[action]) await openExternal('x-apple.systempreferences:com.apple.preference.security?' + targets[action]);
+                if (targets[action]) await openExternal(isWindows ? 'ms-settings:privacy-microphone' : 'x-apple.systempreferences:com.apple.preference.security?' + targets[action]);
             }
         } catch (error) { await screen.notice('Settings', errorMessage(error)); }
     }

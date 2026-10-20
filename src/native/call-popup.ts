@@ -2,9 +2,11 @@ import koffi from 'koffi';
 import { fileURLToPath } from 'node:url';
 import { createLiquidBubble } from './liquid-bubble.js';
 import { initializeAppKit } from './app-kit.js';
+import { createWindowsPopup } from './windows/surface.js';
 export type Popup = { show(title: string, detail: string, actions: { id: string; label: string }[]): void; hide(): void; close(): void };
 
 export function createCallPopup(action: (id: string) => void): Popup {
+    if (process.platform === 'win32') return createWindowsPopup(action);
     if (process.platform !== 'darwin') throw new Error('Call popups require macOS.');
     initializeAppKit();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');

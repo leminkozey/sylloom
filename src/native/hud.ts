@@ -3,10 +3,12 @@ import type { HudSurface, IndicatorView } from '../indicator.js';
 import { createLiquidBubble } from './liquid-bubble.js';
 import { Waveform } from '../waveform.js';
 import { initializeAppKit } from './app-kit.js';
+import { createWindowsHud } from './windows/surface.js';
 
 // AppKit stays on Node's main thread. This transparent, nonactivating panel
 // ignores mouse events, so focus and clicks stay in the user's application.
 export function createNativeHud(): HudSurface {
+    if (process.platform === 'win32') return createWindowsHud();
     if (process.platform !== 'darwin') throw new Error("The dictation indicator requires macOS.");
     initializeAppKit();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');

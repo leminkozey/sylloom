@@ -1,6 +1,8 @@
 import koffi from 'koffi';
+import { windowsTeamsToken } from './windows/credentials.js';
 
 export function teamsToken(value?: string): string | undefined {
+    if (process.platform === 'win32') return windowsTeamsToken(value);
     if (process.platform !== 'darwin') return undefined;
     const security = koffi.load('/System/Library/Frameworks/Security.framework/Security');
     const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation');

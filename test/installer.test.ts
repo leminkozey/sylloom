@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-test('installer delegates global setup, respects model profiles and stops on failure', async () => {
+test('installer delegates global setup, respects model profiles and stops on failure', { skip: process.platform === 'win32' }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-installer-test-'));
     const project = path.join(root, 'project with spaces');
     const commands = path.join(root, 'commands');

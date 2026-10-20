@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const roots = ['src', 'test', 'scripts', 'assets', 'website', '.github'];
-const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'LICENSE', 'AGENTS.md', 'PERFORMANCE.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', 'install.sh', 'sylloom'];
+const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'LICENSE', 'AGENTS.md', 'PERFORMANCE.md', 'WINDOWS.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', '.gitattributes', 'install.sh', 'install.ps1', 'sylloom', 'sylloom.cmd'];
 const websiteBinary = /^website\/assets\/(?:(?:ocean|call-water|footer-water)\.jpg|fonts\/instrument-(?:sans|serif-italic)\.ttf)$/;
 
 export async function publicFiles(root: string): Promise<string[]> {
@@ -26,8 +26,8 @@ export async function publicFiles(root: string): Promise<string[]> {
             const directory = relative.split(path.sep)[0]!;
             const extensions: Record<string, RegExp> = { src: /\.ts$/, test: /\.test\.ts$/, scripts: /\.ts$/, assets: /\.svg$/, website: /\.(?:html|css|ts|svg|jpg|ttf|txt)$/, '.github': /\.ya?ml$/ };
             if (extensions[directory] && !extensions[directory]!.test(relative)) throw new Error('Unexpected release file type: ' + relative);
-            if (/\.(?:jpg|ttf)$/.test(relative) && !websiteBinary.test(relative)) throw new Error('Unexpected website asset: ' + relative);
-            result.push(relative);
+            if (/\.(?:jpg|ttf)$/.test(relative) && !websiteBinary.test(relative.split(path.sep).join('/'))) throw new Error('Unexpected website asset: ' + relative);
+            result.push(relative.split(path.sep).join('/'));
         }
         else throw new Error('Unexpected release entry: ' + relative);
     };
@@ -49,7 +49,7 @@ export async function checkPublicFiles(root: string, selected: string[]): Promis
     for (const relative of selected) {
         if (/\.(?:wav|aiff|mp3|m4a|gguf|bin|log)$/i.test(relative)) throw new Error('Private or binary data in release: ' + relative);
         const buffer = await readFile(path.join(root, relative));
-        if (websiteBinary.test(relative)) {
+        if (websiteBinary.test(relative.split(path.sep).join('/'))) {
             const validImage = relative.endsWith('.jpg') && buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
             const validFont = relative.endsWith('.ttf') && buffer.subarray(0, 4).equals(Buffer.from([0, 1, 0, 0]));
             if (!validImage && !validFont) throw new Error('Invalid website asset: ' + relative);

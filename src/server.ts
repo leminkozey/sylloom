@@ -1,3 +1,4 @@
+import { processCommand } from './process-command.js';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -60,7 +61,7 @@ export class ModelServer {
         const authenticated = this.kind === 'llama' && await supportsLlamaAuthentication(this.binary);
         if (this.stopped) throw new Error("Model startup canceled.");
         if (authenticated) this.apiKey = randomBytes(32).toString('base64url');
-        this.child = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'],
+        this.child = spawn(...processCommand(this.binary, args), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
             ...(this.apiKey ? { env: { ...process.env, LLAMA_API_KEY: this.apiKey } } : {}) });
         this.exited = new Promise(resolve => this.child!.once('close', () => resolve()));
         this.unregister = onShutdown(() => this.stop());

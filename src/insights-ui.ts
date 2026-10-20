@@ -1,5 +1,4 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { home } from './store.js';
@@ -9,6 +8,8 @@ import type { Insights } from './insights.js';
 import type { Screen } from './terminal/screen.js';
 import { copyText } from './clipboard.js';
 import style from './terminal/style.js';
+export { openExternal } from './external.js';
+import { openExternal } from './external.js';
 
 const number = (value: number) => value.toLocaleString('en');
 export function shareText(stats: Insights): string {
@@ -16,13 +17,6 @@ export function shareText(stats: Insights): string {
 }
 export function shareUrl(stats: Insights): string {
     const url = new URL('https://x.com/intent/tweet'); url.searchParams.set('text', shareText(stats)); return url.href;
-}
-export async function openExternal(target: string): Promise<void> {
-    if (process.platform !== 'darwin') throw new Error('Opening an external item currently requires macOS.');
-    await new Promise<void>((resolve, reject) => {
-        const child = spawn('open', [target], { stdio: 'ignore' });
-        child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error('Could not open this item.')));
-    });
 }
 
 export function renderInsights(stats: Insights, width: number, now = new Date()): string[] {
@@ -78,7 +72,7 @@ byId('generated').textContent='Private, local snapshot · '+data.generated+' · 
 function grid(){const cells=data.cells.slice(-Number(byId('period').value)*7);byId('calendar').replaceChildren(...cells.map(cell=>{const b=document.createElement('button');b.className='cell'+(cell.future?' future':'');b.dataset.level=cell.level;b.disabled=cell.future;b.setAttribute('aria-label',cell.date+': '+fmt(cell.words)+' words');b.title=b.getAttribute('aria-label');b.onfocus=b.onmouseenter=b.onclick=()=>byId('day').textContent=b.title;return b}));}grid();byId('period').onchange=grid;
 byId('share').onclick=()=>{byId('draft').value=data.share;byId('preview').showModal()};byId('close').onclick=()=>byId('preview').close();
 byId('open-x').onclick=()=>window.open('https://x.com/intent/tweet?text='+encodeURIComponent(byId('draft').value),'_blank','noopener,noreferrer');
-byId('copy').onclick=async()=>{try{await navigator.clipboard.writeText(byId('draft').value);byId('copy').textContent='Copied'}catch{byId('draft').select();byId('copy').textContent='Press Cmd+C'}};
+byId('copy').onclick=async()=>{try{await navigator.clipboard.writeText(byId('draft').value);byId('copy').textContent='Copied'}catch{byId('draft').select();byId('copy').textContent=/Mac|iPhone|iPad/.test(navigator.platform)?'Press Cmd+C':'Press Ctrl+C'}};
 byId('png').onclick=()=>{try{const c=document.createElement('canvas');c.width=1200;c.height=630;const x=c.getContext('2d');x.fillStyle='#111114';x.fillRect(0,0,1200,630);x.fillStyle='#ffffff';[8,24,16,32,16,24,8].forEach((h,i)=>x.fillRect(64+i*7,68-h/2,4,h));x.font='600 26px system-ui';x.fillStyle='#ffffff';x.fillText('Sylloom',130,78);x.font='20px system-ui';x.fillStyle='#a6a6b4';x.fillText('MY VOICE, IN NUMBERS',64,150);x.font='500 86px system-ui';x.fillStyle='#eeedf4';x.fillText(fmt(data.words)+' words spoken',64,254);x.font='28px system-ui';x.fillStyle='#bfc2ff';x.fillText(data.currentStreak+'-day streak    '+data.wpm+' WPM    '+fmt(data.dictations)+' dictations',64,316);data.cells.forEach((a,i)=>{if(a.future)return;x.fillStyle=['#24242c','#414260','#6266a2','#898dee','#bfc2ff'][a.level];x.fillRect(64+Math.floor(i/7)*20,365+(i%7)*19,14,13)});x.font='18px system-ui';x.fillStyle='#a6a6b4';x.fillText('Local voice. A little less typing.',64,574);x.fillText('Recording-based WPM · '+data.generated,640,574);c.toBlob(blob=>{if(!blob){byId('message').textContent='Could not save the card.';return}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download='sylloom-insights.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);byId('message').textContent='Share card saved. Attach it to your X draft.'},'image/png')}catch{byId('message').textContent='Could not save the card. Try Safari or Chrome.'}};
 </script></body></html>`;
 }

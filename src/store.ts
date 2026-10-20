@@ -184,8 +184,10 @@ export async function acquireLock(): Promise<() => Promise<void>> {
     // outside that directory so their late cleanup cannot unlink its inode.
     const ownerFile = path.join(home, 'controller.lock');
     const owner = await open(ownerFile, 'a+', 0o600);
+    let unlock: (() => void) | undefined;
     try {
-        if (!lockController(owner.fd)) throw new Error('Sylloom is already running. Close the other controller first.');
+        unlock = lockController(owner.fd, ownerFile);
+        if (!unlock) throw new Error('Sylloom is already running. Close the other controller first.');
         const legacy = (await owner.stat()).size === 0;
         // Respect an older controller that used a PID directory instead of flock.
         if (legacy && existsSync(path.join(directory, 'pid'))) {
@@ -201,10 +203,10 @@ export async function acquireLock(): Promise<() => Promise<void>> {
         }
         if (legacy) await owner.writeFile('flock-v1\n');
         await writeFile(path.join(directory, 'pid'), String(process.pid), { mode: 0o600 });
-    } catch (error) { await owner.close(); throw error; }
+    } catch (error) { unlock?.(); await owner.close(); throw error; }
     let releasing: Promise<void> | undefined;
     return () => releasing ||= (async () => {
         try { await rm(path.join(directory, 'pid'), { force: true }); }
-        finally { await owner.close(); }
+        finally { unlock?.(); await owner.close(); }
     })();
 }

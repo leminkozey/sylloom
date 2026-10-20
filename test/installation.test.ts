@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { installCommand } from '../src/installation.js';
 
-test('global command handles spaces and shell syntax, works without Node on PATH, and is repeatable', async () => {
+test('global command handles spaces and shell syntax, works without Node on PATH, and is repeatable', { skip: process.platform === 'win32' }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-command-'));
     const project = path.join(root, "project's $(touch injected) files");
     const userHome = path.join(root, 'user'); const binDirectory = path.join(root, "bin's tools");
@@ -35,7 +35,7 @@ test('global command handles spaces and shell syntax, works without Node on PATH
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('installation preserves foreign commands and dangling links, and migrates its own old symlink', async () => {
+test('installation preserves foreign commands and dangling links, and migrates its own old symlink', { skip: process.platform === 'win32' }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-command-'));
     const project = path.join(root, 'project'); const binDirectory = path.join(root, 'bin');
     try {
@@ -53,7 +53,7 @@ test('installation preserves foreign commands and dangling links, and migrates i
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('PATH setup respects custom zsh locations and existing bash login files', async () => {
+test('PATH setup respects custom zsh locations and existing bash login files', { skip: process.platform === 'win32' }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sylloom-shell-'));
     try {
         const project = path.join(root, 'project'); await mkdir(path.join(project, 'dist'), { recursive: true });

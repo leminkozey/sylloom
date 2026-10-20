@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { temporaryClipboard } from './pasteboard.js';
 import type { CapturedInput } from '../insertion.js';
 import { initializeAppKit } from './app-kit.js';
+import { captureWindowsInput, windowsInsertionAvailable } from './windows/input.js';
 
 function api() {
     // CLI processes need an AppKit connection before querying system-wide focus.
@@ -71,10 +72,12 @@ let loaded: ReturnType<typeof api> | undefined;
 const native = () => loaded ||= api();
 
 export function accessibilityStatus(): boolean {
+    if (process.platform === 'win32') return windowsInsertionAvailable();
     try { return process.platform === 'darwin' && native().trusted(); } catch { return false; }
 }
 
 export function captureInput(): CapturedInput {
+    if (process.platform === 'win32') return captureWindowsInput();
     try { return inspectInput(); } catch { return { reason: 'The focused input could not be inspected.' }; }
 }
 

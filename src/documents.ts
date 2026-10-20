@@ -2,13 +2,13 @@ import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promis
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { marked } from 'marked';
 import sanitizeHtml from 'sanitize-html';
 import { home, sessionDirectory } from './store.js';
 import { cleanText } from './types.js';
 import type { Session } from './types.js';
+import { openExternal } from './external.js';
 
 export type DocumentKind = 'note' | 'transcript';
 export type ExportFormat = 'md' | 'html';
@@ -18,7 +18,11 @@ export function documentPath(session: Session, kind: DocumentKind): string {
 }
 
 export function exportName(session: Session, kind: DocumentKind, format: ExportFormat): string {
-    const name = (session.name || session.id).normalize('NFKC').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[.-]+|[.-]+$/g, '') || session.id;
+    let name = (session.name || session.id).normalize('NFKC').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[.-]+|[.-]+$/g, '') || session.id;
+    // Default exports should work on both filesystems, including notes whose
+    // title happens to be a Windows device name or contains long Unicode text.
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(name)) name = '_' + name;
+    while (Buffer.byteLength(name, 'utf8') > 200) name = Array.from(name).slice(0, -1).join('');
     return name + (kind === 'transcript' ? "-transcript" : '') + '.' + format;
 }
 
@@ -61,13 +65,8 @@ export async function exportDocument(session: Session, kind: DocumentKind, desti
 }
 
 export async function openDocument(session: Session, kind: DocumentKind): Promise<string> {
-    if (process.platform !== 'darwin') throw new Error("Opening in a browser currently requires macOS. Export the note as HTML instead.");
     const target = path.join(home, 'views', session.id + '-' + kind + '.html');
     await exportDocument(session, kind, target, 'html', true);
-    await new Promise<void>((resolve, reject) => {
-        const child = spawn('open', [target], { stdio: 'ignore' });
-        child.once('error', reject);
-        child.once('exit', code => code === 0 ? resolve() : reject(new Error("Could not open the browser.")));
-    });
+    await openExternal(target);
     return target;
 }

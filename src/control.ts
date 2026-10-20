@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, createConnection } from 'node:net';
 import type { Socket } from 'node:net';
 import { chmod, rm } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { home } from './store.js';
 import type { Recorder } from './recorder.js';
 import { errorMessage } from './types.js';
 
-const socketPath = () => process.platform === 'win32' ? '\\\\.\\pipe\\meeting-' + Buffer.from(home).toString('hex').slice(-40) : path.join(home, 'control.sock');
+const socketPath = () => process.platform === 'win32' ? '\\\\.\\pipe\\sylloom-' + createHash('sha256').update(home.toLowerCase()).digest('hex').slice(0, 40) : path.join(home, 'control.sock');
 
 export async function startControl(recorder: Recorder): Promise<() => Promise<void>> {
     const address = socketPath();

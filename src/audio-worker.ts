@@ -54,7 +54,7 @@ async function handle(message: { id: number; command: string; source: Source; de
                 if (failures.length) throw new Error(failures.join('\n'));
                 break;
             }
-            default: throw new Error('Unbekannter Audiobefehl.');
+            default: throw new Error('Unknown audio command.');
         }
         port.postMessage({ type: 'response', id: message.id, result });
     } catch (error) {
