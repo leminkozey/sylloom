@@ -46,9 +46,10 @@ function createMorph(host: HTMLElement, motion: MediaQueryList): void {
     let fromFont = '', toFont = '', fromSpace = 0, toSpace = 0;
     const centered = host.dataset.align !== 'left';
     let anchor = 0;
-    function drawText(targetFont: boolean) {
-        context!.clearRect(0, 0, width, height); context!.globalAlpha = 1;
+    function drawText(targetFont: boolean, opacity = 1, clear = true) {
+        if (clear) context!.clearRect(0, 0, width, height);
         context!.save();
+        context!.globalAlpha = opacity;
         context!.translate(0, targetFont ? toBaseline : fromBaseline);
         context!.scale(1, targetFont ? toScale : fromScale);
         context!.font = targetFont ? toFont : fromFont;
@@ -159,6 +160,19 @@ function createMorph(host: HTMLElement, motion: MediaQueryList): void {
                 }
             }
             context!.globalAlpha = 1;
+            // Resolve the refracted contours into the exact font raster before
+            // the hold begins. Add weighted alpha so overlapping ink stays solid
+            // instead of fading or snapping to a thinner shape on the last frame.
+            const settle = 1 - ease(clamp(Math.min(p, 1 - p) / .1));
+            if (settle > 0) {
+                context!.globalCompositeOperation = 'destination-in';
+                context!.globalAlpha = 1 - settle;
+                context!.fillRect(0, 0, width, height);
+                context!.globalCompositeOperation = 'lighter';
+                drawText(p > .5, settle, false);
+                context!.globalCompositeOperation = 'source-over';
+                context!.globalAlpha = 1;
+            }
         }
         frame = requestAnimationFrame(tick);
     }

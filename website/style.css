@@ -30,7 +30,6 @@ h2{font-size:clamp(44px,4.6vw,65px);font-weight:500;line-height:1.04;letter-spac
 .fluid-text{position:relative;display:block;height:1.38em;min-height:0;line-height:1.38;width:100%;margin:0;overflow:visible}
 .fluid-text .morph-final{display:inline-block;font-size:1.12em;line-height:1.38;white-space:nowrap}
 .fluid-text .morph-start{font-size:inherit;line-height:1.38;font-weight:500;opacity:0}
-.has-js .fluid-text .morph-final{opacity:0}
 .fluid-text.has-morph .morph-final,.fluid-text.has-morph .morph-start{opacity:0!important}
 .fluid-text.has-morph canvas{opacity:1;display:block!important}
 .footer-morph{max-width:900px;letter-spacing:-.06em}

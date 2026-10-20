@@ -20,7 +20,7 @@ Usage: ./install.sh [--dictation-only | --skip-models] [--no-link] [--no-path] [
   --check           Check requirements without installing or changing anything
   --help           Show this help
 
-By default, installs four local models (about 9.3 GiB), then installs the command
+By default, installs four local models (about 7.3 GiB), then installs the command
 and configures PATH for zsh, bash or fish if needed. No sudo is used.
 Set SYLLOOM_HOME to choose a data directory; SYLLOOM_BIN_DIR chooses the link directory.
 Existing recordings, settings and unrelated commands are preserved.

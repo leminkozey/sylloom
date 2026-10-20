@@ -2,6 +2,7 @@ import { headlineMorph } from './headline.js';
 import { callDemo } from './call-demo.js';
 import { demoWaveform } from './dictation-waveform.js';
 import { noteExport } from './note-export.js';
+import { vocabularyDemo } from './vocabulary-demo.js';
 document.documentElement.classList.add('has-js');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const reveal = new IntersectionObserver(entries => {
@@ -139,6 +140,7 @@ window.addEventListener('pageshow', syncPlayback);
 
 callDemo(reducedMotion);
 noteExport();
+vocabularyDemo(reducedMotion);
 void headlineMorph(reducedMotion);
 
 // The spotlight opens the photo into the page as it reaches the viewport.

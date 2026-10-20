@@ -20,8 +20,8 @@ Sylloom has its own waveform mark. See [design provenance](DESIGN.md) and [third
 
 ## Install
 
-Requires an Apple Silicon Mac, macOS 14.4 or later, and approximately 10 GiB of free
-space for the default models, plus dependencies. 16 GiB of RAM is recommended.
+Requires an Apple Silicon Mac, macOS 14.4 or later, and at least 10 GiB of free
+space for models, downloads and dependencies. 16 GiB of RAM is recommended.
 The installer uses [Homebrew](https://brew.sh) for missing native dependencies.
 Install Homebrew first if it is not already available.
 
@@ -29,7 +29,7 @@ Clone or download this repository, open its directory, then run:
 
 ```sh
 ./install.sh
-sylloom
+./sylloom
 ```
 
 The installer checks your Mac, installs Node.js if needed, installs `whisper-server`
@@ -58,8 +58,8 @@ reinstalling dependencies or downloading models:
 
 ```sh
 ./sylloom install
-sylloom --version
-sylloom stats
+./sylloom --version
+./sylloom stats
 ```
 
 Repeating `sylloom install` updates Sylloom's own launcher and avoids duplicate
@@ -109,13 +109,46 @@ Choose **Message**, **Email** or **List** in Settings. Dictation keeps the langu
 you spoke; it does not translate your message. The interface and generated meeting
 notes are in English. Transcription language defaults to automatic detection;
 set it to `en`, `de` or another supported language in Settings when useful.
-The bundled formatter is intended for German and English.
+The default 0.6B formatter is [Spokenly Cleanup 1](https://huggingface.co/spokenly/cleanup-1-gguf).
+It supports English, German, Spanish, French, Chinese, Russian and Japanese;
+its publisher reports stronger quality in English. Whisper recognizes additional
+languages. When Whisper reports a language outside that cleanup set, Sylloom
+keeps the original wording and skips model cleanup. The Library shows the
+recognized language. Choose **Settings → Models and performance → Recognition
+language → Automatic detection** when switching languages. A fixed `de` setting
+forces German recognition even when you speak English; Automatic can take longer.
 
-Say “new paragraph”, “neuer Absatz” or “Absatzwechsel” for a paragraph break.
+Automatic formatting recognizes speech fillers, corrections and natural list
+requests. Clear list and email layout is handled in code, without generating it
+again. For example, “Meine To-do-Liste: Milch kaufen und Lea anrufen” becomes
+a Markdown checklist; “Schreib mir eine Liste: …” produces a bullet list.
+Empty endings such as “und eh ja” or “und ja, naja” are removed. Meaningful
+affirmative answers and quoted words remain part of the text. A list ending such
+as “und naja, keine Ahnung” is discarded, while a meaningful “Ich bin mir nicht
+sicher, ob …” stays. “Milch und Brot einkaufen” remains one task. A list heading
+recognized with a comma or period instead of a colon is still treated as a heading.
+Lists can sit between ordinary paragraphs in the same dictation. An introduction
+stays prose, repeated packing requirements become bullets, and the following
+narrative returns to prose. Explicit to-do requests use checkboxes. Compound
+objects such as “bread and butter” stay together, and self-corrections within an
+item are cleaned without turning the rest of the message into a list.
+
+Say “new paragraph”, “neuer Absatz”, “nächster Absatz” or “Absatzwechsel” for a
+paragraph break when spoken as a standalone command. Discussing the phrase or
+asking another person to add a paragraph remains dictated prose. English and
+the other cleanup languages have corresponding standalone paragraph commands.
+A repaired command such as “nächster Ansatz, nächster Absatz
+meine ich” also starts a paragraph. An explicitly withdrawn final list item is
+removed; quoted words remain literal. A formal greeting and sign-off can select
+email layout even in Message mode. Ordinary requests stay prose, including
+requests to draft an email. Longer prose gets paragraph breaks at clear topic
+transitions or sentence boundaries without changing its words.
 Dictation history retains the original transcript, formatted text and audio.
 Every dictation is kept, including canceled, failed and interrupted recordings.
 Read, rename, pin, reformat, copy or explicitly delete it from the Library.
-Canceling a reformat preserves its previous saved version. Closing the CLI stops
+**Reformat saved text** requests model formatting even when Automatic would skip
+the text or formatting is switched off for new dictations. Explicit snippets
+retain their exact saved text. Canceling a reformat preserves its previous saved version. Closing the CLI stops
 capture, retains interrupted audio and unregisters the shortcuts.
 
 ### Personal words, corrections and snippets
@@ -244,6 +277,14 @@ without recording audio. Close preview or Ctrl+C ends the preview.
 
 Only clicking **Record** starts audio capture. Recording stops after a confirmed
 hangup belonging to that same call; an unavailable detector keeps it running.
+Teams microphone previews are treated as **joining**, so a recognized Join now
+screen does not trigger a call prompt. If a recording was started from audio
+activity before that screen was recognized, it continues through the preview.
+Audio activity and pairing permissions alone cannot arm Teams auto-stop. A
+not-in-meeting API message only ends the same call after that API confirmed it
+was joined; otherwise confirmed native call controls are required. Without
+confirmation, stop the recording manually. Repeated end messages retain the
+confirmed hangup instead of canceling automatic stop.
 Switch auto-stop Off under Recording and audio. Teams' local device API may need
 enabling in its Privacy settings, or an administrator may disable it. A token is
 stored only in macOS Keychain. Naming and the transcript decision always remain
@@ -310,17 +351,28 @@ reopen them from the CLI to refresh.
 
 ## Dictation latency
 
-Whisper and the formatter preload when recording starts. Transcription still
-begins only after stopping. Models stay warm for 120 seconds after copying, then
-release their memory. Canceling, closing or starting another processing task
-also releases them. Set the warm period to 0–600 seconds in Settings.
+Whisper and the formatter preload in the background when the CLI starts, before
+the first recording. The status shows “Warming local dictation models…” until
+they are ready. The first capture reuses that startup promise if loading is still
+in progress. No microphone is opened and no transcription runs during preload.
+Transcription begins only after stopping. Models stay warm for 120 seconds after
+delivery by default, then release their memory. Canceling, closing or starting
+another processing task also releases them. Set the warm period to 0–600 seconds
+in Settings. Off disables startup preload and releases models after each dictation.
 
-Automatic polish passes through already capitalized and punctuated messages.
-Correction, filler, enumeration and spoken-number cues invoke the formatter;
-emails and lists always invoke it. This detection uses heuristics. Choose
-**Dictation polish → Always use model** to format every message with the model.
+Automatic formatting skips the model only for short, simple messages without
+speech-editing cues. Capitals and punctuation do not prove a longer dictation is
+already written text. Natural to-do/list requests, fillers, corrections and
+spoken numbers invoke the formatter when needed. Recognized list layout, paragraph
+commands, empty endings and email greeting/sign-off layout use code. The small
+formatter handles semantic cleanup and self-corrections, using its trained plain
+completion prompt and greedy decoding. Long inputs split at sentence boundaries
+within its 4,096-token context; oversized sentences fail without truncating text.
+Choose **Settings → Dictation → Formatting mode → Always** to run the model for
+every dictation. The Library reports whether the formatter ran and the result changed.
 
-A local comparison on an M4 with two synthetic German samples measured:
+An earlier pipeline comparison, before the current formatting corrections,
+measured two synthetic German samples on an M4:
 
 | Sample | Previous pipeline | Optimized, first run | Optimized, repeated |
 | --- | --- | --- | --- |
@@ -419,14 +471,23 @@ configure the note backend. File paths stay in the custom-file dialog.
 | Meeting transcription | [Whisper large-v3, FP16](https://huggingface.co/ggerganov/whisper.cpp) | 2.9 GiB |
 | Dictation transcription | [Whisper large-v3-turbo, FP16](https://huggingface.co/ggerganov/whisper.cpp) | 1.5 GiB |
 | Meeting notes | [Qwen3 4B Q4_K_M](https://huggingface.co/Qwen/Qwen3-4B-GGUF) | 2.3 GiB |
-| Dictation polish | [Qwen3.5 4B Parakeet Formatter](https://huggingface.co/justusraw/Qwen3.5-4B-Parakeet-formatter) | 2.6 GiB |
+| Dictation polish | [Spokenly Cleanup 1, 0.6B Q8](https://huggingface.co/spokenly/cleanup-1-gguf) | 610 MiB |
 
 Install individually with `./sylloom models install whisper`, `dictation-whisper`,
 `llama` or `formatter`. `all` installs all four; `both` installs meeting models only.
 `--keep-selection` downloads without changing saved selections, as the installer does.
+Existing installations keep their selected formatter. Choose the fast model in
+**Local models → Dictation formatting → Use recommended model**, or run
+`sylloom models install formatter`. The previous Qwen3.5 4B fine-tune remains an
+optional slower model in the same menu, or `sylloom models install formatter-quality`.
 Settings also accepts custom compatible model files. Meeting notes can use an
 already installed Ollama model through a loopback-only HTTP endpoint. There is no
 remote model endpoint or cloud fallback. Model terms remain with their publishers.
+
+Managed llama servers use a fresh, in-memory API key per process when the runtime
+advertises `--api-key` with `LLAMA_API_KEY` support. The key is never saved or
+printed. Older or custom binaries without that support retain loopback-only
+access; update them to enable authentication. External Ollama remains user-managed.
 
 Everything is stored under the local, git-ignored `data/` directory by default:
 
@@ -458,8 +519,15 @@ Current limits: macOS on Apple Silicon is the tested platform; Windows and Linux
 are not supported releases. No speaker identification, acoustic echo cancellation
 or guaranteed gapless device switching. WAV tracks are limited to about 37 hours.
 Dictation formatting is limited to 12,000 characters and 24 paragraphs.
+Recognition and cleanup can still mishear names or numbers. Review the result
+before sending; the original transcript and audio remain available in Library.
 
 ## Development and release preparation
+
+Dictation uses same-model prompt lookup on compatible Apple Silicon runtimes and
+keeps its formatter context warm. Auto mode only regenerates message paragraphs
+that need editing. See [runtime measurements and tradeoffs](PERFORMANCE.md),
+including the local MLX comparison and the reproducible benchmarks.
 
 The product page lives in `website/`. Run `npm run site` for a local preview at
 `http://127.0.0.1:4173`, or `npm run site:build` for static files in `dist/site/`.
@@ -496,7 +564,11 @@ npm run verify:local                  # Synthetic meeting → transcription → 
 npm run verify:local -- --audio       # Also tests actual capture and device controls
 npm run verify:dictation              # Synthetic dictation → real clipboard; restores it
 npm run verify:dictation -- --audio   # Also tests microphone preload and cancellation
+npm run verify:formatting             # Real formatter, speech fillers, to-dos and protected facts; no clipboard
+npm run verify:formatting -- --model path/to/formatter.gguf # Check a candidate without changing settings
 npm run benchmark:dictation
+npm run benchmark:runtime             # Same selected formatter weights, runtime comparison
+npm run benchmark:runtime -- --audio-only # Stopped synthetic audio to formatted text
 ```
 
 QA uses temporary data directories and fictional samples. German fixtures are
