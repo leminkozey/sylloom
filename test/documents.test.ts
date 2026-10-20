@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import stringWidth from 'string-width';
@@ -11,6 +12,7 @@ const store = await import('../src/store.js');
 const { renderMarkdown } = await import('../src/terminal/markdown.js');
 const { exportDocument, exportName, renderHtml } = await import('../src/documents.js');
 const { Transcription, decodeSegments, transcriptionProfile } = await import('../src/transcription.js');
+const { ModelServer } = await import('../src/server.js');
 const { WavWriter, RATE } = await import('../src/wav.js');
 const { reopenSession } = await import('../src/workflow.js');
 
@@ -53,6 +55,29 @@ test('settings migration disables live work and upgrades only the original bundl
     await store.saveSettings({ ...config, whisperModel: '/custom/model.bin' });
     config = await store.settings();
     assert.equal(config.whisperModel, '/custom/model.bin');
+});
+
+test('automatic recognition retains detected language in reusable checkpoints without translation', async context => {
+    const session = { id: randomUUID(), name: 'Language fixture', startedAt: new Date().toISOString(), stoppedAt: new Date().toISOString(),
+        state: 'stopped' as const, decision: null, recovered: false, events: [] };
+    const directory = path.join(root, 'language-fixture'); await mkdir(path.join(directory, 'chunks'), { recursive: true });
+    const pcm = Buffer.alloc(RATE * 2);
+    for (let sample = 0; sample < RATE; sample++) pcm.writeInt16LE(Math.round(Math.sin(sample * 0.1) * 8000), sample * 2);
+    const writer = new WavWriter(path.join(directory, 'mic.wav')); writer.append(pcm); writer.close();
+    context.mock.method(ModelServer.prototype, 'start', async () => 'http://localhost');
+    context.mock.method(ModelServer.prototype, 'stop', async () => {});
+    let requests = 0;
+    context.mock.method(globalThis, 'fetch', async (_url, init) => {
+        const form = init?.body as FormData; requests++;
+        assert.equal(form.get('language'), 'auto'); assert.equal(form.get('translate'), 'false');
+        assert.equal(form.get('no_language_probabilities'), 'true');
+        return Response.json({ text: 'Please do not send the file.', language: 'english' });
+    });
+    const config = { ...store.defaults, language: 'auto' };
+    const first = new Transcription(session, config, directory);
+    try { await first.initialize(); await first.drain(); assert.equal(first.language, 'english'); } finally { await first.close(); }
+    const cached = new Transcription(session, config, directory);
+    try { await cached.initialize(); assert.equal(cached.language, 'english'); await cached.drain(); assert.equal(requests, 1); } finally { await cached.close(); }
 });
 
 test('offline transcription refuses a running recording and ignores old live/model checkpoints', async () => {

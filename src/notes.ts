@@ -180,7 +180,7 @@ export async function summarize(session: Session, transcript: string, config: Se
                 ? { model: config.ollamaModel, messages, format: noteSchema, stream: false, think: false, options: { temperature: 0.1, num_ctx: 16384, num_predict: 3000 } }
                 : { messages, stream: false, temperature: 0.1, max_tokens: 3000, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'meeting_note', strict: true, schema: noteSchema } } };
             const response = await fetch(url + (config.llm === 'ollama' ? '/api/chat' : '/v1/chat/completions'), {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+                method: 'POST', headers: { ...(config.llm === 'llama' ? server.headers : {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
                 signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000), redirect: 'error',
             });
             if (!response.ok) throw new Error("Local note model returned HTTP " + response.status);

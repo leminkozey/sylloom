@@ -26,19 +26,21 @@ export async function dictationItemMenu(screen: Screen, service: DictationServic
     for (;;) {
         if (screen.quitRequested) return;
         const selected = await screen.select(item.name && item.name !== 'Dictation' ? item.name : "Dictation · " + new Date(item.startedAt).toLocaleString("en-GB"), [
-            ...(item.text ? [{ value: 'view', name: "Read formatted text" }, { value: 'copy', name: "Copy formatted text" }] : []),
+            ...(item.text ? [{ value: 'view', name: "Read result" }, { value: 'copy', name: "Copy result" }] : []),
             ...(item.raw ? [{ value: 'raw', name: "Read original transcript" }, { value: 'copy-raw', name: "Copy original transcript" }] : []),
             { value: 'edit', name: 'Edit formatted text…', hint: 'Multiline editor. Save explicitly; original recognition and audio stay unchanged.' },
             { value: 'teach', name: 'Teach a correction for future dictation…', hint: 'Separate from editing this result. Preview and save a permanent local rule explicitly.' },
             ...(item.edits?.length ? [{ value: 'versions', name: 'Read previous text versions · ' + item.edits.length }] : []),
-            { value: 'retry', name: 'Reformat saved text', hint: 'Reuse the transcript. Keep the previous result if processing fails.' },
+            { value: 'retry', name: 'Reformat saved text', hint: 'Reformat even when Auto would skip. Reuse the transcript; keep the previous result if processing fails.' },
             { value: 'transcribe', name: 'Transcribe audio again', hint: 'Use the current recognition model. Keep the previous result until success.' },
             { value: 'organize', name: 'Rename / pin' },
             { value: 'delete', name: "Delete dictation, audio and text" }, { value: 'back', name: "Back" },
         ], { back: true, detail: item.error || [item.outcome, formatLabels[item.format], item.delivery?.kind, item.delivery?.reason].filter(Boolean).join(' · '),
             before: () => item.timings ? [
                 'Recognition ' + (item.timings.transcriptionMs / 1000).toFixed(1) + ' s · Formatting ' + (item.timings.formattingMs / 1000).toFixed(1) + ' s',
-                'Total ' + (item.timings.totalMs / 1000).toFixed(1) + ' s · Formatter ' + (item.timings.usedFormatter ? 'used' : 'skipped') + ' · ' + COPY_SHORTCUT + ' Copy latest', '',
+                'Total ' + (item.timings.totalMs / 1000).toFixed(1) + ' s · Formatter ' + (item.timings.usedFormatter ? 'used' : 'skipped') +
+                    ' · Text ' + (item.text === item.raw ? 'unchanged' : 'changed') + ' · ' + COPY_SHORTCUT + ' Copy latest', '',
+                ...(item.recognitionLanguage ? ['Recognized language: ' + item.recognitionLanguage, ''] : []),
             ] : [] });
         if (['quit', 'back', 'settings'].includes(selected)) return;
         try {
@@ -64,7 +66,8 @@ export async function dictationItemMenu(screen: Screen, service: DictationServic
                 const format = await screen.select("Format dictation", [...Object.entries(formatLabels).map(([value, name]) => ({ value, name, state: value === item.format ? 'Selected' : '' })), { value: 'back', name: "Back" }], { back: true, initialValue: item.format });
                 if (Object.hasOwn(formatLabels, format)) {
                     if (service.busy) throw new Error("Stop or cancel dictation first.");
-                    void service.retry(item, format as DictationFormat, selected === 'transcribe').catch(error => notify(errorMessage(error))); return;
+                    const operation = selected === 'retry' ? service.reformat(item, format as DictationFormat) : service.retry(item, format as DictationFormat, true);
+                    void operation.catch(error => notify(errorMessage(error))); return;
                 }
             }
             if (selected === 'delete') {

@@ -96,7 +96,7 @@ async function editGroup(screen: Screen, config: Settings, group: Group, devices
         selected = result.action;
         try {
         if (selected === 'polish') {
-            const mode = await pickValue(screen, 'Formatting mode', [{ value: 'auto', name: 'Automatic', hint: 'Skip the model for clean messages. Faster for short dictations.' }, { value: 'always', name: 'Always', hint: 'Polish every dictation with the local model.' }], draft.dictationPolish);
+            const mode = await pickValue(screen, 'Formatting mode', [{ value: 'auto', name: 'Automatic', hint: 'Clean speech and structure lists. Skip the model only for short, simple messages.' }, { value: 'always', name: 'Always', hint: 'Polish every dictation with the local model.' }], draft.dictationPolish);
             if (mode === 'auto' || mode === 'always') draft.dictationPolish = mode;
         }
         if (selected === 'format') {
@@ -133,7 +133,7 @@ async function performanceSettings(screen: Screen, config: Settings): Promise<vo
         ], { back: true, initialValue: selected, detail: 'Save language and performance edits. Esc discards. Model management is an immediate action.' });
         if (['back', 'quit', 'settings'].includes(selected)) return;
         try {
-        if (selected === 'models') await modelMenu(screen, config);
+        if (selected === 'models') { await modelMenu(screen, config); void screen.dictation?.prewarm(); }
         if (selected === 'language') {
             const language = await pickValue(screen, 'Recognition language', [{ value: 'auto', name: 'Automatic detection' }, { value: 'de', name: 'German' }, { value: 'en', name: 'English' },
                 { value: 'fr', name: 'French' }, { value: 'es', name: 'Spanish' }, { value: 'it', name: 'Italian' }, { value: 'custom', name: 'Other language code…' }], draft.language);
@@ -147,7 +147,10 @@ async function performanceSettings(screen: Screen, config: Settings): Promise<vo
         if (selected === 'save') {
             if (screen.dictation?.busy) { await screen.notice('Dictation active', 'Finish or cancel dictation before saving performance settings.'); continue; }
             await saveSettings({ ...config, language: draft.language, dictationWarmSeconds: draft.dictationWarmSeconds });
-            Object.assign(config, { language: draft.language, dictationWarmSeconds: draft.dictationWarmSeconds }); return;
+            Object.assign(config, { language: draft.language, dictationWarmSeconds: draft.dictationWarmSeconds });
+            if (draft.dictationWarmSeconds > 0) void screen.dictation?.prewarm();
+            else await screen.dictation?.releaseModels();
+            return;
         }
         } catch (error) { await screen.notice('Performance settings', errorMessage(error) + ' Your draft is retained.'); }
     }

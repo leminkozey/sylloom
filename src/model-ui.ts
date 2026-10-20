@@ -10,7 +10,7 @@ import type { Screen, Choice } from './terminal/screen.js';
 const back = { value: 'back', name: 'Back' };
 const sections = [
     { kind: 'dictation-whisper', key: 'dictationWhisperModel', title: 'Dictation', purpose: 'Turn your voice into text quickly.', size: '1.5 GiB' },
-    { kind: 'formatter', key: 'dictationModel', title: 'Dictation formatting', purpose: 'Polish messages, emails and lists.', size: '2.6 GiB' },
+    { kind: 'formatter', key: 'dictationModel', title: 'Dictation formatting', purpose: 'Fast cleanup with code-based email and list layout.', size: '610 MiB' },
     { kind: 'whisper', key: 'whisperModel', title: 'Meeting transcription', purpose: 'Transcribe microphone and system audio after a meeting.', size: '2.9 GiB' },
     { kind: 'llama', key: 'llmModel', title: 'Meeting notes', purpose: 'Turn a transcript into a structured note.', size: '2.3 GiB' },
 ] as const;
@@ -52,6 +52,10 @@ async function sectionMenu(screen: Screen, config: Settings, section: Section): 
                 hint: models[section.kind].label + (current === bundled && existsSync(bundled) ? ' · Selected' : '') },
             { value: 'custom', name: 'Choose a custom model file…', hint: 'Select an existing compatible model on this Mac.' },
         ];
+        if (section.kind === 'formatter' && !usingOllama) items.splice(1, 0, {
+            value: 'quality', name: 'Use larger formatter · 2.6 GiB', state: current === path.join(modelDirectory, models['formatter-quality'].file) ? 'Selected' : '',
+            hint: 'Qwen3.5 4B · Slower, with broader model-based formatting. Download only if needed.',
+        });
         if (section.kind === 'llama') items.push({ value: 'backend', name: 'Backend', state: usingOllama ? 'Ollama' : 'llama.cpp', hint: 'Switch the local backend for meeting notes.' });
         items.push(back);
         const action = await screen.select(section.title, items, { back: true,
@@ -66,6 +70,10 @@ async function sectionMenu(screen: Screen, config: Settings, section: Section): 
                 const target = existsSync(bundled) ? bundled : await screen.task('Installing ' + models[section.kind].label, (update, signal) =>
                     installModel(section.kind, (received, total) => update(Math.round(received / total * 100) + '% · ' + Math.round(received / 1024 / 1024) + ' / ' + Math.round(total / 1024 / 1024) + ' MiB'), signal));
                 config[section.key] = target;
+            }
+            if (action === 'quality' && section.kind === 'formatter') {
+                config.dictationModel = await screen.task('Preparing ' + models['formatter-quality'].label, (update, signal) =>
+                    installModel('formatter-quality', (received, total) => update(Math.round(received / total * 100) + '%'), signal));
             }
             if (action === 'custom') {
                 const value = await screen.input(section.title + ' model', 'Path to an existing compatible model file', current);

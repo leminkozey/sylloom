@@ -19,7 +19,9 @@
     "test": "tsx --test test/*.test.ts",
     "verify:local": "tsx scripts/verify-local.ts",
     "verify:dictation": "tsx scripts/verify-dictation.ts",
+    "verify:formatting": "tsx scripts/verify-formatting.ts",
     "benchmark:dictation": "tsx scripts/benchmark-dictation.ts",
+    "benchmark:runtime": "tsx scripts/benchmark-runtime.ts",
     "release:check": "tsx scripts/release.ts --check",
     "release:prepare": "tsx scripts/release.ts"
   },
@@ -49,6 +51,7 @@
     "LICENSE",
     "README.md",
     "DESIGN.md",
+    "PERFORMANCE.md",
     "NOTICE.md"
   ],
   "homepage": "https://github.com/leminkozey/sylloom",

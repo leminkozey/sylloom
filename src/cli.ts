@@ -333,10 +333,10 @@ program.command('settings').description("Configure devices, language and local m
 }));
 
 const modelCommand = program.command('models').description('Manage local models');
-modelCommand.command('install <model>').description("Install whisper, dictation-whisper, llama, formatter, both or all")
+modelCommand.command('install <model>').description("Install whisper, dictation-whisper, llama, formatter, formatter-quality, both or all")
     .option('--keep-selection', 'Download models without changing saved model selections')
     .action((kind, options) => locked(async () => {
-    if (!['whisper', 'dictation-whisper', 'llama', 'formatter', 'both', 'all'].includes(kind)) throw new Error("Choose whisper, dictation-whisper, llama, formatter, both or all.");
+    if (!['whisper', 'dictation-whisper', 'llama', 'formatter', 'formatter-quality', 'both', 'all'].includes(kind)) throw new Error("Choose whisper, dictation-whisper, llama, formatter, formatter-quality, both or all.");
     const config = await settings();
     for (const key of (kind === 'all' ? ['dictation-whisper', 'formatter', 'whisper', 'llama'] : kind === 'both' ? ['whisper', 'llama'] : [kind]) as (keyof typeof models)[]) {
         let last = 0;
@@ -347,7 +347,7 @@ modelCommand.command('install <model>').description("Install whisper, dictation-
         });
         if (key === 'whisper') config.whisperModel = target;
         else if (key === 'dictation-whisper') config.dictationWhisperModel = target;
-        else if (key === 'formatter') config.dictationModel = target;
+        else if (key === 'formatter' || key === 'formatter-quality') config.dictationModel = target;
         else { config.llmModel = target; config.llm = 'llama'; }
         if (!options.keepSelection) await saveSettings(config);
         process.stdout.write(target + '\n');

@@ -40,6 +40,11 @@ Model weights are downloaded separately, never bundled in the public source arch
 
 - [Whisper large-v3 and large-v3-turbo GGML](https://huggingface.co/ggerganov/whisper.cpp).
 - [Qwen3 4B GGUF](https://huggingface.co/Qwen/Qwen3-4B-GGUF).
+- [Spokenly Cleanup 1](https://huggingface.co/spokenly/cleanup-1-gguf), the default
+  0.6B dictation cleanup model, Apache 2.0. Its [license](https://huggingface.co/spokenly/cleanup-1-gguf/blob/main/LICENSE)
+  and [notice](https://huggingface.co/spokenly/cleanup-1-gguf/blob/main/NOTICE)
+  are available from the publisher. The installer downloads the weight file and
+  provenance metadata; it does not bundle those separate documents.
 - [Qwen3.5 4B Parakeet Formatter](https://huggingface.co/justusraw/Qwen3.5-4B-Parakeet-formatter).
 
 Consult each model repository for its current license, base-model terms and model

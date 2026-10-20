@@ -7,7 +7,8 @@ import { modelDirectory, atomicJson } from './store.js';
 export const models = {
     whisper: { repository: 'ggerganov/whisper.cpp', file: 'ggml-large-v3.bin', label: 'Whisper large-v3' },
     llama: { repository: 'Qwen/Qwen3-4B-GGUF', file: 'Qwen3-4B-Q4_K_M.gguf', label: 'Qwen3 4B Q4_K_M' },
-    formatter: { repository: 'justusraw/Qwen3.5-4B-Parakeet-formatter', file: 'Qwen3.5-4B-dictation-v3-MTP-Q4_K_M.gguf', label: "Qwen3.5 4B dictation fine-tune" },
+    formatter: { repository: 'spokenly/cleanup-1-gguf', file: 'cleanup-1-q8_0.gguf', label: 'Spokenly Cleanup 1 · 0.6B Q8' },
+    'formatter-quality': { repository: 'justusraw/Qwen3.5-4B-Parakeet-formatter', file: 'Qwen3.5-4B-dictation-v3-MTP-Q4_K_M.gguf', label: 'Qwen3.5 4B dictation fine-tune' },
     'dictation-whisper': { repository: 'ggerganov/whisper.cpp', file: 'ggml-large-v3-turbo.bin', label: "Whisper large-v3-turbo for dictation" },
 };
 

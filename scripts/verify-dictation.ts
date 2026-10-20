@@ -15,10 +15,11 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'meeting-dictation-verify-'));
 process.env.SYLLOOM_HOME = root;
 const { defaults, atomicJson } = await import('../src/store.js');
 const { DictationService, dictationDirectory, dictations } = await import('../src/dictation.js');
+const { models } = await import('../src/models.js');
 const config = { ...defaults, language: 'de',
     whisperModel: fileURLToPath(new URL('../data/models/ggml-large-v3.bin', import.meta.url)),
     dictationWhisperModel: fileURLToPath(new URL('../data/models/ggml-large-v3-turbo.bin', import.meta.url)),
-    dictationModel: fileURLToPath(new URL('../data/models/Qwen3.5-4B-dictation-v3-MTP-Q4_K_M.gguf', import.meta.url)),
+    dictationModel: fileURLToPath(new URL('../data/models/' + models.formatter.file, import.meta.url)),
 };
 const service = new DictationService(config);
 const restore = preserveClipboard();

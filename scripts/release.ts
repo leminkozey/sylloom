@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const roots = ['src', 'test', 'scripts', 'assets', 'website', '.github'];
-const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'LICENSE', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', 'install.sh', 'sylloom'];
+const files = ['README.md', 'DESIGN.md', 'NOTICE.md', 'LICENSE', 'AGENTS.md', 'PERFORMANCE.md', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore', 'install.sh', 'sylloom'];
 const websiteBinary = /^website\/assets\/(?:(?:ocean|call-water|footer-water)\.jpg|fonts\/instrument-(?:sans|serif-italic)\.ttf)$/;
 
 export async function publicFiles(root: string): Promise<string[]> {

@@ -71,6 +71,11 @@ export class Transcription extends EventEmitter {
         this.unregister = onShutdown(() => this.close());
     }
     get segments(): Segment[] { return this.jobs.flatMap(job => job.segments).sort((a, b) => a.start - b.start); }
+    get language(): string | undefined {
+        const counts = new Map<string, number>();
+        for (const job of this.jobs) if (job.state === 'done' && job.language) counts.set(job.language, (counts.get(job.language) || 0) + job.samples);
+        return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+    }
     get failures(): number { return this.jobs.filter(job => job.state === 'error').length; }
 
     async initialize(): Promise<void> {
@@ -133,6 +138,7 @@ export class Transcription extends EventEmitter {
             const form = new FormData();
             form.set('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'audio.wav');
             form.set('language', this.config.language);
+            form.set('translate', 'false');
             form.set('response_format', 'verbose_json');
             form.set('token_timestamps', 'false');
             form.set('no_language_probabilities', 'true');
@@ -140,7 +146,8 @@ export class Transcription extends EventEmitter {
             if (this.prompt) form.set('prompt', this.prompt);
             const response = await fetch(url + '/inference', { method: 'POST', body: form, redirect: 'error', signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(1_800_000)]) });
             if (!response.ok) throw new Error('Whisper returned HTTP ' + response.status);
-            const body = await response.json() as { text?: unknown; segments?: { start: number; end: number; text: string }[] };
+            const body = await response.json() as { text?: unknown; language?: unknown; segments?: { start: number; end: number; text: string }[] };
+            if (typeof body.language === 'string' && /^[a-z -]{2,40}$/i.test(body.language)) job.language = body.language.toLowerCase();
             if (!Array.isArray(body.segments) && (start !== job.offset || end !== job.offset + job.samples)) {
                 throw new Error('Whisper did not return segment timestamps for overlapping audio. Use a server with verbose_json support.');
             }

@@ -16,6 +16,7 @@ export type Session = {
 export type Segment = { source: Source; start: number; end: number; text: string };
 export type Chunk = {
     profile?: string;
+    language?: string;
     source: Source;
     offset: number;
     samples: number;

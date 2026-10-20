@@ -4,6 +4,9 @@ import { createServer } from 'node:net';
 import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { onShutdown } from './lifecycle.js';
+import { randomBytes } from 'node:crypto';
+import { dictationRuntimeArguments, supportsLlamaAuthentication } from './model-runtime.js';
+import type { ModelServerOptions } from './model-runtime.js';
 
 async function freePort(): Promise<number> {
     const server = createServer();
@@ -35,9 +38,11 @@ export class ModelServer {
     private exited?: Promise<void>;
     private stopping?: Promise<void>;
     private unregister = () => {};
-    constructor(private binary: string, private model: string, private kind: 'whisper' | 'llama', private options: { contextSize?: number } = {}) {}
+    private apiKey?: string;
+    constructor(private binary: string, private model: string, private kind: 'whisper' | 'llama', private options: ModelServerOptions = {}) {}
 
     get reusable(): boolean { return !this.stopped && !this.failure; }
+    get headers(): Record<string, string> { return this.apiKey ? { Authorization: 'Bearer ' + this.apiKey } : {}; }
 
     start(): Promise<string> {
         if (this.stopped) return Promise.reject(new Error("Model startup canceled."));
@@ -51,13 +56,21 @@ export class ModelServer {
         if (this.stopped) throw new Error("Model startup canceled.");
         const args = ['--model', this.model, '--host', '127.0.0.1', '--port', String(port)];
         if (this.kind === 'llama') args.push('--ctx-size', String(this.options.contextSize || 16384), '--parallel', '1', '--jinja');
-        this.child = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        if (this.kind === 'llama' && this.options.profile === 'dictation') args.push(...await dictationRuntimeArguments(this.binary));
+        const authenticated = this.kind === 'llama' && await supportsLlamaAuthentication(this.binary);
+        if (this.stopped) throw new Error("Model startup canceled.");
+        if (authenticated) this.apiKey = randomBytes(32).toString('base64url');
+        this.child = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'],
+            ...(this.apiKey ? { env: { ...process.env, LLAMA_API_KEY: this.apiKey } } : {}) });
         this.exited = new Promise(resolve => this.child!.once('close', () => resolve()));
         this.unregister = onShutdown(() => this.stop());
         const parentExit = () => { this.child?.kill('SIGTERM'); };
         process.once('exit', parentExit);
         this.child.once('close', () => { process.off('exit', parentExit); this.unregister(); });
-        const record = (data: Buffer) => { this.diagnostic = (this.diagnostic + data.toString()).slice(-2500); };
+        const record = (data: Buffer) => {
+            const diagnostic = this.diagnostic + data.toString();
+            this.diagnostic = (this.apiKey ? diagnostic.replaceAll(this.apiKey, '[redacted]') : diagnostic).slice(-2500);
+        };
         this.child.stdout?.on('data', record);
         this.child.stderr?.on('data', record);
         this.child.on('error', error => { this.failure = error.message; });
@@ -70,7 +83,7 @@ export class ModelServer {
                 if (this.failure) throw new Error(this.failure);
                 let ready = false;
                 try {
-                    const response = await fetch(this.url + '/health', { signal: AbortSignal.timeout(1000), redirect: 'error' });
+                    const response = await fetch(this.url + '/health', { headers: this.headers, signal: AbortSignal.timeout(1000), redirect: 'error' });
                     ready = response.ok;
                     await response.body?.cancel();
                 } catch { /* Wait for model loading. */ }

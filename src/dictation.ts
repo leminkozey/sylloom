@@ -8,6 +8,7 @@ import { Recorder } from './recorder.js';
 import { Transcription, timestamp } from './transcription.js';
 import { formatDictation, needsDictationFormatting } from './formatter.js';
 import { DictationModels, dictationConfig } from './dictation-models.js';
+import { formatterSupportsLanguage } from './model-runtime.js';
 import { copyText, notify } from './clipboard.js';
 import { registerHotkeys, DICTATION_SHORTCUT } from './hotkey.js';
 import { onShutdown } from './lifecycle.js';
@@ -22,6 +23,7 @@ import { loadLibrary } from './library.js';
 import type { DictationFormat, Session, Settings } from './types.js';
 
 export type Dictation = Session & { format: DictationFormat; raw?: string; text?: string; copiedAt?: string; error?: string;
+    recognitionLanguage?: string;
     editedAt?: string; edits?: { at: string; text: string }[];
     outcome?: 'completed' | 'failed' | 'canceled' | 'interrupted'; delivery?: Delivery;
     timings?: { transcriptionMs: number; formattingMs: number; totalMs: number; usedFormatter: boolean } };
@@ -111,6 +113,18 @@ export class DictationService extends EventEmitter {
             this.config.copyLatestShortcut ? () => { void this.copyLatest().catch(error => notify(errorMessage(error))); } : undefined); }
         catch (error) { this.hotkeyError = errorMessage(error); this.update('error', this.hotkeyError, true); }
         if (process.platform === 'darwin' && this.config.dictationIndicator) this.closeIndicator = attachIndicator(this, message => notify(message));
+        void this.prewarm();
+    }
+    async prewarm(): Promise<void> {
+        if (this.closing || this.busy || this.blocked() || this.config.dictationWarmSeconds <= 0) return;
+        if (this.state === 'idle') this.update('idle', 'Warming local dictation models…');
+        const ready = await this.models.prewarm(this.config);
+        if (!this.closing && this.state === 'idle' && this.message === 'Warming local dictation models…') {
+            this.update('idle', ready || this.config.dictationWarmSeconds <= 0 ? 'Ready to dictate' : 'Models will retry when dictation starts');
+        }
+        // Startup and settings preloads need the same idle limit as a completed
+        // dictation. A preload finishing during capture must not stop its server.
+        if (!this.closing && !this.busy) this.models.release(this.config.dictationWarmSeconds);
     }
     private update(state: typeof this.state, message: string, notification = false): void {
         this.state = state; this.message = message; this.emit('update');
@@ -153,7 +167,7 @@ export class DictationService extends EventEmitter {
         await this.recorder?.stop(); this.recorder = undefined;
         await this.process(this.current!, this.controller!.signal);
     }
-    private async process(item: Dictation, signal: AbortSignal, directory = dictationDirectory(item.id), persist = save): Promise<void> {
+    private async process(item: Dictation, signal: AbortSignal, directory = dictationDirectory(item.id), persist = save, forceFormat = false): Promise<void> {
         const start = performance.now();
         let transcriptionMs = 0;
         let rules = emptySpeechRules(); let rulesFailure: unknown;
@@ -176,6 +190,7 @@ export class DictationService extends EventEmitter {
                 if (transcription.failures) await transcription.retry();
                 await transcription.drain();
                 item.raw = transcription.segments.map(segment => segment.text).join(' ').trim();
+                item.recognitionLanguage = transcription.language;
                 if (!item.raw) throw new Error("No speech detected. Clipboard preserved.");
                 await persist(item);
             } finally { signal.removeEventListener('abort', cancel); await transcription.close(); }
@@ -185,12 +200,15 @@ export class DictationService extends EventEmitter {
         if (rulesFailure) throw rulesFailure;
         this.update('processing', "Formatting dictation locally…");
         const formattingStart = performance.now();
+        const formattingConfig = { ...this.config, language: item.recognitionLanguage || this.config.language,
+            ...(forceFormat ? { dictationPolish: 'always' as const } : {}) };
         const snippet = matchSnippet(item.raw, rules);
-        const usedFormatter = !snippet && this.config.dictationPolish !== 'off' && (this.config.dictationPolish === 'always' || needsDictationFormatting(item.raw, item.format));
-        const server = usedFormatter ? await this.models.get('formatter', this.config, item.raw.length > 6000 ? 16384 : 8192) : undefined;
+        const usedFormatter = !snippet && formattingConfig.dictationPolish !== 'off' && formatterSupportsLanguage(formattingConfig.dictationModel, formattingConfig.language) &&
+            (formattingConfig.dictationPolish === 'always' || needsDictationFormatting(item.raw, item.format));
+        const server = usedFormatter ? await this.models.get('formatter', this.config) : undefined;
         signal.throwIfAborted();
         const words = rules.enabled ? rules.words.filter(word => word.enabled).map(word => word.text) : [];
-        const text = snippet ? snippet.text : applyTextRules(await formatDictation(item.raw, item.format, this.config, signal, server, words), rules);
+        const text = snippet ? snippet.text : applyTextRules(await formatDictation(item.raw, item.format, formattingConfig, signal, server, words), rules);
         if (snippet) item.events.push({ at: new Date().toISOString(), message: 'Explicit whole-dictation snippet expanded: ' + snippet.trigger });
         const formattingMs = Math.round(performance.now() - formattingStart);
         signal.throwIfAborted();
@@ -216,11 +234,17 @@ export class DictationService extends EventEmitter {
             'Copied · Paste with Cmd+V · Saved in Library', true);
     }
     async retry(item: Dictation, format = item.format, retranscribe = false): Promise<void> {
+        return this.reprocess(item, format, { retranscribe });
+    }
+    async reformat(item: Dictation, format = item.format): Promise<void> {
+        return this.reprocess(item, format, { forceFormat: true });
+    }
+    private async reprocess(item: Dictation, format: DictationFormat, options: { retranscribe?: boolean; forceFormat?: boolean }): Promise<void> {
         if (this.closing) throw new Error("The dictation service is closing.");
         if (this.busy || this.blocked()) throw new Error("Recording or processing is already active.");
         this.previous = structuredClone(item);
         this.current = { ...structuredClone(item), format }; this.canceled = false;
-        if (retranscribe) { delete this.current.raw; this.current.transcriptionRevision = (item.transcriptionRevision || 0) + 1; }
+        if (options.retranscribe) { delete this.current.raw; this.current.transcriptionRevision = (item.transcriptionRevision || 0) + 1; }
         this.input?.target?.close(); this.input = undefined;
         this.controller = new AbortController();
         this.update('processing', "Reprocessing dictation…");
@@ -232,7 +256,7 @@ export class DictationService extends EventEmitter {
                 attempt = await mkdtemp(path.join(directory, 'retry-'));
                 if (!next.raw) await copyFile(path.join(directory, 'mic.wav'), path.join(attempt, 'mic.wav'));
                 signal.throwIfAborted();
-                await this.process(next, signal, attempt, value => atomicJson(path.join(attempt!, 'session.json'), value));
+                await this.process(next, signal, attempt, value => atomicJson(path.join(attempt!, 'session.json'), value), options.forceFormat);
                 signal.throwIfAborted();
                 this.committing = true;
                 try {

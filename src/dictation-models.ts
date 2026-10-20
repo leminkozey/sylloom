@@ -4,6 +4,8 @@ import { ModelServer } from './server.js';
 import { modelDirectory } from './store.js';
 import { models } from './models.js';
 import type { Settings } from './types.js';
+import type { ModelServerOptions } from './model-runtime.js';
+import { usesCleanupModel } from './model-runtime.js';
 
 type Entry = { key: string; server: ModelServer; before: Promise<void> };
 
@@ -21,14 +23,16 @@ export class DictationModels {
     private stopping = Promise.resolve();
     private closed = false;
 
-    constructor(private create = (binary: string, model: string, kind: 'whisper' | 'llama', options: { contextSize?: number }) => new ModelServer(binary, model, kind, options)) {}
+    constructor(private create = (binary: string, model: string, kind: 'whisper' | 'llama', options: ModelServerOptions) => new ModelServer(binary, model, kind, options)) {}
 
-    async get(kind: 'whisper' | 'formatter', config: Settings, contextSize = 8192): Promise<ModelServer> {
+    async get(kind: 'whisper' | 'formatter', config: Settings): Promise<ModelServer> {
         if (this.closed) throw new Error("Dictation models are closed.");
         clearTimeout(this.idle);
         const binary = kind === 'whisper' ? config.whisperBinary : config.llmBinary;
         const model = kind === 'whisper' ? dictationConfig(config).whisperModel : config.dictationModel;
-        const options = kind === 'formatter' ? { contextSize } : {};
+        // Reserve the model's context at startup. Switching sizes after
+        // transcription used to discard the already warm model.
+        const options: ModelServerOptions = kind === 'formatter' ? { contextSize: usesCleanupModel(model) ? 4096 : 16384, profile: 'dictation' } : {};
         const key = JSON.stringify({ binary, model, options });
         let entry = this.entries.get(kind);
         if (!entry || entry.key !== key || !entry.server.reusable) {
@@ -40,11 +44,12 @@ export class DictationModels {
         return entry.server;
     }
 
-    async prewarm(config: Settings): Promise<void> {
-        await Promise.allSettled((['whisper', ...(config.dictationPolish === 'off' ? [] : ['formatter'])] as ('whisper' | 'formatter')[]).map(async kind => {
+    async prewarm(config: Settings): Promise<boolean> {
+        const results = await Promise.allSettled((['whisper', ...(config.dictationPolish === 'off' ? [] : ['formatter'])] as ('whisper' | 'formatter')[]).map(async kind => {
             const server = await this.get(kind, config);
             await server.start();
         }));
+        return results.every(result => result.status === 'fulfilled');
     }
 
     release(seconds: number): void {

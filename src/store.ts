@@ -14,7 +14,7 @@ export const defaults: Settings = {
     whisperBinary: 'whisper-server', whisperModel: path.join(modelDirectory, 'ggml-large-v3.bin'),
     llm: 'llama', llmBinary: 'llama-server', llmModel: path.join(modelDirectory, 'Qwen3-4B-Q4_K_M.gguf'),
     ollamaModel: 'qwen3:4b', ollamaUrl: 'http://127.0.0.1:11434',
-    dictationModel: path.join(modelDirectory, 'Qwen3.5-4B-dictation-v3-MTP-Q4_K_M.gguf'), dictationFormat: 'message',
+    dictationModel: path.join(modelDirectory, 'cleanup-1-q8_0.gguf'), dictationFormat: 'message',
     dictationWhisperModel: path.join(modelDirectory, 'ggml-large-v3-turbo.bin'), dictationWarmSeconds: 120,
     dictationPolish: 'auto', dictationAutoInsert: true,
     globalShortcuts: true, copyLatestShortcut: true, dictationIndicator: true, dictationNotifications: true,
@@ -127,6 +127,7 @@ function validChunk(value: unknown, file: string): value is Chunk {
         Number.isSafeInteger(job.samples) && job.samples > 0 && Number.isSafeInteger(job.offset + job.samples) &&
         file === path.basename(chunkFile('', job.source, job.offset, '.')) &&
         (job.profile === undefined || typeof job.profile === 'string') && ['done', 'error'].includes(job.state) &&
+        (job.language === undefined || (typeof job.language === 'string' && /^[a-z -]{2,40}$/i.test(job.language))) &&
         (job.error === undefined || typeof job.error === 'string') && Array.isArray(job.segments) &&
         job.segments.every(segment => segment && segment.source === job.source && typeof segment.text === 'string' &&
             Number.isFinite(segment.start) && segment.start >= 0 && Number.isFinite(segment.end) && segment.end > segment.start) &&
