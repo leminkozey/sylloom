@@ -101,6 +101,7 @@ export class Recorder extends EventEmitter {
         } catch (error) {
             // Tell the controller before potentially slow native/model cleanup.
             // A failed start must not leave its indicator looking active.
+            this.event('Recording could not start: ' + errorMessage(error));
             if (!this.stopping) this.emit('failure', error);
             await this.stop();
             throw error;

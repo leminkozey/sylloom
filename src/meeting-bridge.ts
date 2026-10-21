@@ -5,6 +5,7 @@ import { startControl } from './control.js';
 import { calendarRange, cachedCalendar, readLocalCalendar } from './calendar.js';
 import type { CalendarSnapshot, CalendarEvent } from './calendar.js';
 import { CallDetector, enabledCallApps } from './calls.js';
+import type { CallSnapshot } from './calls.js';
 import { createCallPopup } from './native/call-popup.js';
 import type { Popup } from './native/call-popup.js';
 import { notify } from './clipboard.js';
@@ -23,7 +24,7 @@ export class MeetingBridge extends EventEmitter {
     private closeTask?: Promise<void>;
     private closed = false;
     private unregister = () => {};
-    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector; origin: string };
+    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector; origin: string; started: boolean; failure?: string };
     private startingCapture = false;
     private captureStart?: Promise<string>;
     private stoppingCapture?: Promise<string | undefined>;
@@ -49,7 +50,7 @@ export class MeetingBridge extends EventEmitter {
     private changed(): void { this.revision++; this.emit('update'); }
     get recording(): boolean { return Boolean(this.capture || this.startingCapture); }
     get working(): boolean { return Boolean(this.screen?.taskActive); }
-    get call() { return this.detector?.snapshot || { state: 'unknown', source: 'none', message: 'Local bridge is disabled.', since: '', callId: 0, accessibility: false }; }
+    get call(): CallSnapshot { return this.detector?.snapshot || { state: 'unknown', source: 'none', message: 'Local bridge is disabled.', since: '', callId: 0, accessibility: false }; }
     get currentSession(): Session | undefined { return this.capture?.session; }
     get currentRecorder(): Recorder | undefined { return this.capture?.recorder; }
     get captureStatus(): string[] {
@@ -149,7 +150,7 @@ export class MeetingBridge extends EventEmitter {
             this.offeredCall = undefined;
         }
         if (call.state === 'idle' && this.offeredCall !== undefined) { this.offeredCall = undefined; if (!this.capture) this.popup?.hide(); }
-        if (this.config.callAutoStop && this.capture && owner?.state === 'idle' && canStop && !this.callEndTimer) {
+        if (this.config.callAutoStop && this.capture?.started && !this.startingCapture && owner?.state === 'idle' && canStop && !this.callEndTimer) {
             const id = this.capture.session.id;
             // A disconnected observer emits unknown. Only a stable, confirmed idle
             // state can stop the capture belonging to this particular call.
@@ -176,7 +177,8 @@ export class MeetingBridge extends EventEmitter {
         this.offeredEvent = undefined;
         if (action === 'join' && event?.joinUrl && this.config.meetingReminders && Date.parse(event.start) > Date.now()) await openExternal(event.joinUrl);
         if (action === 'record') {
-            if (!['active', 'ringing'].includes(this.call.state) || this.offeredCall !== this.call.callId) throw new Error('The call is no longer detected. Start a meeting from Sylloom if needed.');
+            // The explicit Record click remains valid while Teams switches from
+            // its preview to the joined room and observation briefly changes.
             await this.startRecording();
         }
         this.offeredCall = undefined;
@@ -202,37 +204,49 @@ export class MeetingBridge extends EventEmitter {
     startRecording(): Promise<string> {
         if (this.closed) return Promise.reject(new Error('The bridge is closing.'));
         if (this.recording || this.working || this.service.busy || this.screen?.taskActive || this.screen?.recordingActive) return Promise.reject(new Error('Another recording or processing task is active.'));
-        return this.captureStart = this.beginRecording();
+        const call = this.offeredCall === undefined ? this.call : this.detector?.stateFor(this.offeredCall) || this.call;
+        const linked = call.callId && (['active', 'ringing', 'joining'].includes(call.state) || (call.state === 'unknown' && call.callId === this.offeredCall));
+        return this.captureStart = this.beginRecording(linked ? { call, detector: this.detector } : undefined);
     }
-    private async beginRecording(): Promise<string> {
+    private async beginRecording(owner?: { call: CallSnapshot; detector?: CallDetector }): Promise<string> {
         if (this.recording || this.working || this.service.busy || this.screen?.taskActive || this.screen?.recordingActive) throw new Error('Another recording or processing task is active.');
         this.startingCapture = true;
         if (this.screen) this.screen.recordingActive = true;
+        this.progress = 'Starting microphone and system audio…'; this.changed();
         try {
             await this.service.releaseModels();
             if (this.closed) throw new Error('The bridge is closing.');
             const session = await createSession();
             const recorder = this.options.recorder?.(session) || new Recorder(session, this.config);
-            this.capture = { session, recorder, detector: this.detector, callId: ['active', 'ringing'].includes(this.call.state) ? this.call.callId : undefined,
-                origin: ['active', 'ringing'].includes(this.call.state) ? (this.call.app === 'apple' ? 'FaceTime / iPhone' : this.call.app === 'whatsapp' ? 'WhatsApp' : 'Teams') + ' · call ' + this.call.callId : 'Manual recording' };
+            const capture = this.capture = { session, recorder, detector: owner?.detector, callId: owner?.call.callId, started: false, failure: undefined as string | undefined,
+                origin: owner ? (owner.call.app === 'apple' ? 'FaceTime / iPhone' : owner.call.app === 'whatsapp' ? 'WhatsApp' : 'Teams') + ' · call ' + owner.call.callId : 'Manual recording' };
             if (this.closed) throw new Error('The bridge is closing.');
             recorder.on('stopRequested', () => { void this.stopRecording().catch(error => { this.progress = errorMessage(error); }); });
-            recorder.on('failure', error => { this.progress = errorMessage(error); void this.stopRecording().catch(() => {}); });
+            recorder.on('failure', error => {
+                if (this.capture !== capture) return;
+                capture.failure = errorMessage(error); this.progress = capture.failure; this.changed();
+                // start() owns its failure cleanup. Do not race it with a second
+                // stop path that announces an empty recording as saved.
+                if (!this.startingCapture) void this.stopRecording().catch(() => {});
+            });
             await recorder.start();
+            if (capture.failure) throw new Error(capture.failure);
             if (!this.capture || this.capture.session.id !== session.id) throw new Error('Recording stopped during startup. Audio remains saved.');
             const closeControl = await startControl(recorder);
             if (this.closed || this.capture?.session.id !== session.id) { await closeControl(); throw new Error('Recording stopped during startup.'); }
             this.capture.closeControl = closeControl;
+            this.capture.started = true;
             this.progress = 'Recording microphone and system audio';
             this.changed();
             this.showPopup('Recording meeting', 'Microphone and system audio stay on this computer.', [{ id: 'stop', label: 'Stop' }, { id: 'dismiss', label: 'Hide' }]);
             return session.id;
         } catch (error) {
             await this.stopRecording();
-            if (/still pending/i.test(errorMessage(error))) this.showPopup('Recording needs a decision', 'Finish the saved recording before starting another.', [{ id: 'finish', label: 'Finish' }, { id: 'dismiss', label: 'Dismiss' }]);
+            this.progress = 'Recording could not start: ' + errorMessage(error); this.changed();
+            this.showPopup('Recording could not start', errorMessage(error), [{ id: 'record', label: 'Try again' }, { id: 'dismiss', label: 'Dismiss' }]);
             throw error;
         }
-        finally { this.startingCapture = false; if (!this.capture && this.screen) this.screen.recordingActive = false; }
+        finally { this.startingCapture = false; if (!this.capture && this.screen) this.screen.recordingActive = false; this.callChanged(); }
     }
     stopRecording(): Promise<string | undefined> {
         if (this.stoppingCapture) return this.stoppingCapture;
@@ -242,6 +256,12 @@ export class MeetingBridge extends EventEmitter {
             finally {
                 try { await current.closeControl?.(); }
                 finally { clearTimeout(this.callEndTimer); this.callEndTimer = undefined; this.capture = undefined; if (this.screen) this.screen.recordingActive = false; this.stoppingCapture = undefined; this.changed(); }
+            }
+            if (!current.started || current.failure) {
+                this.progress = current.failure || 'Recording stopped before startup completed. Any local files were preserved.';
+                this.changed();
+                if (current.started) this.showPopup('Recording interrupted', this.progress, [{ id: 'finish', label: 'Review' }, { id: 'dismiss', label: 'Later' }]);
+                return current.session.id;
             }
             this.progress = 'Recording saved. Name it and choose what to keep.';
             this.changed();

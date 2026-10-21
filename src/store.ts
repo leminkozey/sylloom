@@ -92,15 +92,15 @@ export async function scanSessions(): Promise<{ sessions: Session[]; issues: Ses
 
 export async function sessions(): Promise<Session[]> { return (await scanSessions()).sessions; }
 
-export async function assertNoPendingSession(): Promise<void> {
+export async function assertNoActiveSession(): Promise<void> {
     const catalog = await scanSessions();
     if (catalog.issues.length) throw new Error('Recording metadata needs attention: ' + catalog.issues[0]!.id + '. Open Storage and recovery or run "sylloom recovery". New meetings are blocked until the metadata is repaired; dictation is available.');
-    const pending = catalog.sessions.find(session => session.state !== 'done');
-    if (pending) throw new Error("Recording still pending: " + pending.id + ". Finish it first with \"sylloom finish\".");
+    const active = catalog.sessions.find(session => session.state === 'recording' || session.state === 'paused');
+    if (active) throw new Error("Recording still active: " + active.id + ". Stop it before starting another recording.");
 }
 
 export async function createSession(): Promise<Session> {
-    await assertNoPendingSession();
+    await assertNoActiveSession();
     const session: Session = {
         id: randomUUID(), name: null, startedAt: new Date().toISOString(), stoppedAt: null,
         state: 'recording', decision: null, recovered: false, events: [],

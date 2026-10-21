@@ -473,7 +473,12 @@ No meeting transcription or note generation runs during capture. After stopping:
 3. Review the resulting document.
 
 There is no default transcript decision. An unfinished recording stays pending
-after closing or crashing. Audio stays with every finish option, including text
+after closing or crashing. Stopped pending recordings do not block the next
+meeting. Use **Finish pending recording** or Library to name each one and choose
+what to keep; starting another recording never makes that decision or deletes
+older files. An active recording still prevents a second capture.
+Startup failures show their cause and offer **Try again**, rather than announcing
+an empty recording as saved. Audio stays with every finish option, including text
 deletion. “Note only” deletes transcript chunks only after the note is saved.
 Note drafts cover discussion, decisions, open questions, actions and risks.
 Empty sections and placeholder actions are omitted. Action owners and dates need

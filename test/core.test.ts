@@ -77,9 +77,9 @@ test('structured notes reject malformed tasks and omit unknown owners without lo
     assert.equal(splitTranscript(transcript).join(''), transcript);
 });
 
-test('an unfinished recording blocks the next one; crash recovery never decides for the user', async () => {
+test('an active recording blocks the next one; stopped decisions remain pending without blocking capture', async () => {
     const session = await store.createSession();
-    await assert.rejects(store.createSession(), /still pending/);
+    await assert.rejects(store.createSession(), /still active/);
     await assert.rejects(store.nameSession(session, '  '));
     await assert.rejects(store.completeSession(session, 'keep'), /Stop and name/);
     const file = path.join(store.sessionDirectory(session.id), 'mic.wav');
@@ -90,6 +90,10 @@ test('an unfinished recording blocks the next one; crash recovery never decides 
     assert.equal(recovered.recovered, true);
     assert.equal(recovered.decision, null);
     assert.equal(recovered.name, null);
+    const next = await store.createSession();
+    assert.notEqual(next.id, recovered.id);
+    assert.equal((await store.loadSession(recovered.id)).decision, null);
+    next.state = 'stopped'; next.stoppedAt = new Date().toISOString(); await store.saveSession(next);
     await store.nameSession(recovered, '../Prüfung\x1b[31m München');
     assert.equal(recovered.name, '../Prüfung München');
     await assert.rejects(store.completeSession(recovered, 'note-only'), /note is missing/);

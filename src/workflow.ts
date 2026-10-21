@@ -3,7 +3,7 @@ import path from 'node:path';
 import { copyFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { assertNoPendingSession, completeSession, loadSession, saveSession, sessionDirectory, sessions } from './store.js';
+import { assertNoActiveSession, completeSession, loadSession, saveSession, sessionDirectory, sessions } from './store.js';
 import { inspectWav, RATE, repairWav, sampleCount } from './wav.js';
 import { summarize } from './notes.js';
 import { IncompleteTranscriptionError, Transcription, transcriptText } from './transcription.js';
@@ -70,7 +70,7 @@ export async function recoverSessions(): Promise<void> {
 
 export async function reopenSession(session: Session): Promise<void> {
     if (session.state !== 'done') throw new Error("This recording is still pending. Finish it first.");
-    await assertNoPendingSession();
+    await assertNoActiveSession();
     if (!['mic', 'system'].some(source => {
         const file = path.join(sessionDirectory(session.id), source + '.wav');
         return existsSync(file) && sampleCount(file) > 0;

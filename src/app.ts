@@ -236,7 +236,7 @@ export async function mainMenu(config: Settings): Promise<void> {
             if (screen.quitRequested) return;
             const catalog = await scanSessions();
             const all = catalog.sessions;
-            const pending = all.find(session => session.state !== 'done');
+            const pending = all.find(session => session.state === 'stopped');
             if (pending && ui.bridge.finishRequested) {
                 ui.bridge.finishRequested = false;
                 if (!await finishFlow(screen, pending, config)) return;
@@ -244,7 +244,8 @@ export async function mainMenu(config: Settings): Promise<void> {
             }
             const revision = ui.bridge.revision;
             const selected = await screen.select("Capture meetings locally", () => choices([
-                [ui.bridge.recording ? 'recording-controls' : pending ? 'finish' : catalog.issues.length ? 'recovery' : 'record', ui.bridge.recording ? 'Recording controls' : pending ? "Finish pending recording" : catalog.issues.length ? 'Review unreadable recording' : "Start recording", catalog.issues.length ? 'Metadata needs attention. Dictation remains available.' : pending?.name || "Microphone and system audio, recorded separately."],
+                [ui.bridge.recording ? 'recording-controls' : catalog.issues.length ? 'recovery' : 'record', ui.bridge.recording ? 'Recording controls' : catalog.issues.length ? 'Review unreadable recording' : "Start recording", catalog.issues.length ? 'Metadata needs attention. Dictation remains available.' : "Microphone and system audio, recorded separately."],
+                ...(!ui.bridge.recording && pending ? [['finish', 'Finish pending recording', all.filter(session => session.state === 'stopped').length + ' awaiting a name and transcript decision. Audio is preserved.'] as [string, string, string]] : []),
                 ['dictation', "Dictation", DICTATION_SHORTCUT + ' in any app. Format, insert or copy, and save locally.'],
                 ['library', 'Library', 'Search notes, recordings and every dictation. Pin what matters.'],
                 ['insights', 'Insights', 'Daily activity, streaks, spoken words and WPM.'],

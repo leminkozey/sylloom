@@ -13,8 +13,8 @@ export type AppObservation = { trusted: boolean; teams: ObservedCallState; calls
 export function callControls(labels: string[], app: CallApp, complete: boolean): ObservedCallState {
     const has = (pattern: RegExp) => labels.some(label => pattern.test(controlLabel(label)));
     if (!has(/\b(invitation|invite|einladung)\b/i) && has(/\b(accept|answer|annehmen)\b/i) && has(/\b(decline|reject|ablehnen)\b/i)) return 'ringing';
-    if (has(/\b(hang.?up|end.?call|leave|verlassen|auflegen|anruf beenden|beenden)\b/i) && has(/\b(mute|unmute|stumm|mikrofon)\b/i)) return 'active';
     if (app === 'teams' && has(/\b(microphone|mic|mikrofon|camera|kamera)\b/i) && has(/\b(pre ?join|join now|jetzt teilnehmen|jetzt beitreten)\b|^(join|teilnehmen|beitreten)( button)?$/i)) return 'joining';
+    if (has(/\b(hang.?up|end.?call|leave|verlassen|auflegen|anruf beenden|beenden)\b/i) && has(/\b(mute|unmute|stumm|mikrofon)\b/i)) return 'active';
     const idle = app === 'teams' ? /\b(chat|calendar|activity|kalender|aktivität)\b/i : app === 'whatsapp' ? /\b(chats|calls|anrufe|new chat|neuer chat)\b/i : /\b(recents|recent calls|keypad|new facetime|new call|letzte|ziffernblock|neuer anruf)\b/i;
     return complete && has(idle) ? 'idle' : 'unknown';
 }

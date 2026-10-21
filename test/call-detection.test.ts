@@ -69,6 +69,8 @@ test('Teams Join now preview controls suppress microphone-test call prompts', as
     assert.equal(callControls(['Join now', 'Microphone', 'Calendar'], 'teams', true), 'joining');
     assert.equal(callControls(['prejoin-join-button', 'Microphone'], 'teams', true), 'joining');
     assert.equal(callControls(['Jetzt teilnehmen', 'Mikrofon'], 'teams', true), 'joining');
+    assert.equal(callControls(['Join now', 'Microphone', 'Leave meeting', 'Mute'], 'teams', true), 'joining', 'Preview controls must not arm hangup detection even with lingering call actions');
+    assert.equal(callControls(['Jetzt teilnehmen', 'Mikrofon stumm', 'Verlassen'], 'teams', true), 'joining');
     const calls = new CallDetector(); calls.enabledApps = ['teams'];
     try {
         calls.observe(teams('joining', true, true));

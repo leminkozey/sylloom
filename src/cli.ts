@@ -314,7 +314,7 @@ program.command('finish [id]').description("Name a stopped recording and choose 
     .addOption(new Option('--action <action>', "Choose what happens to this transcript").choices(['summarize', 'note-only', 'keep', 'delete']))
     .action((id, options) => locked(async () => {
         const config = await settings();
-        const session = id ? await loadSession(id) : (await sessions()).find(item => item.state !== 'done');
+        const session = id ? await loadSession(id) : (await sessions()).find(item => item.state === 'stopped');
         if (!session) throw new Error("No pending recording found.");
         if (session.state !== 'stopped') throw new Error("This recording is already finished or still running.");
         if (options.name) await nameSession(session, options.name);

@@ -170,7 +170,10 @@ test('call-linked capture stops on confirmed hangup and preserves mandatory deci
         calls.setState('idle', 'local-api', 'Confirmed ended'); await delay(1650);
         assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
         const session = await loadSession(id); assert.equal(session.state, 'stopped'); assert.equal(session.name, null); assert.equal(session.decision, null);
-        await assert.rejects(bridge.startRecording(), /pending/);
+        const nextId = await bridge.startRecording();
+        assert.notEqual(nextId, id, 'A stopped pending decision must not block the next call');
+        assert.equal((await loadSession(id)).decision, null);
+        await bridge.stopRecording();
         session.state = 'done'; session.name = 'Finished fixture'; session.decision = 'delete'; await saveSession(session);
     } finally { await bridge.close(); await service.close(); }
 });
