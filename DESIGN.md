@@ -42,12 +42,16 @@ The Markdown renderer uses `marked` with terminal colors for headings, lists,
 tables, quotes and code. Reading starts at the document beginning. HTML exports
 are independent local files with system fonts, dark/light color schemes and print CSS.
 
-The dictation indicator is a dark 122 × 38 point AppKit bubble driven from
+The dictation indicator is a translucent dark 122 × 38 point AppKit bubble driven from
 TypeScript through Koffi, with a 48-point transparent margin for its liquid outline
 and shadow. It displays only a 13-bar waveform, takes no focus and passes clicks
 through during every phase, including transitions. Microphone levels drive
 recording feedback. Gray indicates processing and green confirms delivery.
 Reduce Motion uses a short fade and disables the processing wave animation.
+New captures anchor to the pointer's current display, including quick consecutive
+dictations. Confirmed missing microphones fail before capture. Error feedback
+expires after 900 ms plus its exit transition, independently of slow cleanup;
+later updates to the same error cannot restart it.
 The indicator’s waveform is a functional recording display, separate from the
 static product mark. `sylloom preview-indicator` plays one simulated dictation
 without opening the microphone.
@@ -202,6 +206,10 @@ observable through these native adapters.
 Confirmed ringing or active state offers Record / Dismiss. The native AppKit popup is 330 × 104 points,
 bottom-center on the pointer's display, with the actual logo and centered buttons.
 It takes no keyboard focus before a click. Dictation uses a compact waveform bubble.
+Both have a translucent fill and a thin edge; macOS Reduce Transparency restores
+an opaque background. Dictation notices reuse the same native surface at the
+lower right of the pointer's display, separate from the bottom-center controls.
+Rapid messages replace the existing notice and cancel stale hide/close timers.
 
 The shared `src/native/liquid-bubble.ts` transition morphs a separate CAShapeLayer
 through a circle, a pointed droplet,

@@ -76,14 +76,15 @@ export class Recorder extends EventEmitter {
         if (this.stopping) return;
         try {
             // Discovery cannot ask for microphone permission; opening a stream can.
-            try { this.inventory = await this.audio.devices(); } catch { this.inventory = []; }
+            let discovered = true;
+            try { this.inventory = await this.audio.devices(); } catch { this.inventory = []; discovered = false; }
             if (this.stopping) return;
             for (const source of this.sources) {
+                const requested = source === 'mic' ? this.config.input : this.config.output;
+                const selected = discovered ? resolveDevice(this.inventory, source, requested)?.id : requested;
+                if (!selected) throw new Error("No audio device available for " + source + '.');
                 const file = path.join(this.directory, source + '.wav');
                 this.writers.set(source, new WavWriter(file));
-                const requested = source === 'mic' ? this.config.input : this.config.output;
-                const selected = this.inventory.length ? resolveDevice(this.inventory, source, requested)?.id : requested;
-                if (!selected) throw new Error("No audio device available for " + source + '.');
                 await this.audio.request('start', source, selected);
                 if (this.stopping) return;
                 this.current[source] = selected;
@@ -98,6 +99,9 @@ export class Recorder extends EventEmitter {
             this.timer = setInterval(() => { void this.poll(); }, 2000);
             this.event(this.sources.length === 1 ? "Dictation started. Microphone only." : "Recording started. Microphone and system audio are separate.");
         } catch (error) {
+            // Tell the controller before potentially slow native/model cleanup.
+            // A failed start must not leave its indicator looking active.
+            if (!this.stopping) this.emit('failure', error);
             await this.stop();
             throw error;
         }

@@ -143,13 +143,20 @@ Keep the CLI running, even when another app is in the foreground.
 | Ctrl+Option+Esc | Cancel the current dictation |
 | Cmd+V | Paste when insertion falls back to the clipboard |
 
-A compact waveform bubble appears at the bottom center of your display while
+A compact translucent waveform bubble appears at the bottom center of the display
+containing your mouse pointer while
 dictation is active. It opens from a droplet and contracts back down when finished,
 matching the call popup animation. The waveform eases between samples and settles smoothly during silence.
 The same trace is used by the website demo. The waveform follows the actual microphone
 level, turns gray during processing and briefly green after delivery. The bubble
 contains no labels, buttons or timer, takes no keyboard focus and passes clicks
 through. Reduce Motion replaces the liquid transition with a short fade.
+Missing microphones fail before capture starts. Error feedback closes automatically
+after a brief indication, even while cleanup finishes; repeated error updates do
+not bring it back. Failed attempts remain in Library.
+Dictation notices use Sylloom's own translucent popup at the lower right of the
+pointer's display, keeping the waveform and call controls unobstructed. They never
+take keyboard focus. On Mac, Reduce Transparency keeps a more opaque background.
 
 ```sh
 ./sylloom dictate

@@ -138,8 +138,10 @@ function createSurface(indicator: boolean, onAction: (id: string) => void, right
         const w = width * (.72 + .28 * Math.min(1.05, progress)), h = height * progress;
         const x = padding + (width - w) / 2, y = padding + height - h;
         draw.clear(graphics[0], 0);
-        rounded(x, y, w, h, Math.min(indicator ? 19 : 20, h / 2), 0xee4b4b50);
-        rounded(x + 1, y + 1, Math.max(1, w - 2), Math.max(1, h - 2), Math.min(indicator ? 18 : 19, Math.max(1, h / 2 - 1)), 0xfa151518);
+        // The edge must not be an opaque full-card underlay: it would cancel
+        // out the translucent fill when Windows composites these two shapes.
+        rounded(x, y, w, h, Math.min(indicator ? 19 : 20, h / 2), 0x304b4b50);
+        rounded(x + 1, y + 1, Math.max(1, w - 2), Math.max(1, h - 2), Math.min(indicator ? 18 : 19, Math.max(1, h / 2 - 1)), 0xba151518);
         if (phase === 'visible' || progress > .9) {
             if (indicator) {
                 const heights = waveform.update(view.phase, view.level, performance.now(), motion);
@@ -166,11 +168,11 @@ function createSurface(indicator: boolean, onAction: (id: string) => void, right
         dispose();
     };
     unregister = onShutdown(close);
-    const show = () => {
+    const show = (reanchor = false) => {
         if (closed) return;
         if (!timer) { timer = setInterval(() => { pumpWindow(window); paint(); }, 16); timer.unref(); }
         motion = supportsMotion();
-        if (phase === 'hidden') {
+        if (phase === 'hidden' || reanchor) {
             // A later call/dictation can start on a different monitor. Re-anchor
             // before its first frame rather than sliding across the desktop.
             api.user.func('GetCursorPos', 'int', [koffi.out(koffi.pointer(api.point))])(cursor);
@@ -183,8 +185,8 @@ function createSurface(indicator: boolean, onAction: (id: string) => void, right
         paint();
     };
     return {
-        show(titleValue: string, detailValue: string, options: Action[]) { title = titleValue; detail = detailValue; actions = options.slice(0, 3); show(); },
-        render(value: IndicatorView) { view = value; show(); },
+        show(titleValue: string, detailValue: string, options: Action[]) { title = titleValue; detail = detailValue; actions = options.slice(0, 3); show(true); },
+        render(value: IndicatorView) { const starting = value.phase === 'starting' && view.phase !== 'starting'; view = value; show(starting); },
         hide() { if (!closed && phase !== 'hidden' && phase !== 'hiding') { phase = 'hiding'; since = performance.now(); waveform.reset(); paint(); } },
         close,
     };

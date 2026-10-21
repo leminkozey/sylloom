@@ -2,11 +2,11 @@ import koffi from 'koffi';
 import { fileURLToPath } from 'node:url';
 import { createLiquidBubble } from './liquid-bubble.js';
 import { initializeAppKit } from './app-kit.js';
-import { createWindowsPopup } from './windows/surface.js';
+import { createWindowsNotification, createWindowsPopup } from './windows/surface.js';
 export type Popup = { show(title: string, detail: string, actions: { id: string; label: string }[]): void; hide(): void; close(): void };
 
-export function createCallPopup(action: (id: string) => void): Popup {
-    if (process.platform === 'win32') return createWindowsPopup(action);
+export function createCallPopup(action: (id: string) => void, placement: 'center' | 'notification' = 'center'): Popup {
+    if (process.platform === 'win32') return placement === 'notification' ? createWindowsNotification(action) : createWindowsPopup(action);
     if (process.platform !== 'darwin') throw new Error('Call popups require macOS.');
     initializeAppKit();
     const objc = koffi.load('/usr/lib/libobjc.A.dylib');
@@ -104,7 +104,6 @@ export function createCallPopup(action: (id: string) => void): Popup {
                     object(buttons[i], sel('setTitle:'), text(actions[i]?.label || '')); bool(buttons[i], sel('setHidden:'), !actions[i]);
                     setFrame(buttons[i], sel('setFrame:'), box((width - actions.length * 116 + 6) / 2 + i * 116, 10, 110, 30));
                 }
-                if (bubble.phase === 'visible' || bubble.phase === 'showing') return;
                 const mouse = getPoint(cls('NSEvent'), sel('mouseLocation'));
                 const screens = get(cls('NSScreen'), sel('screens'));
                 const count = objc.func('objc_msgSend', 'ulong', ['void *', 'void *']);
@@ -115,7 +114,9 @@ export function createCallPopup(action: (id: string) => void): Popup {
                     if (mouse.x >= bounds.origin.x && mouse.x < bounds.origin.x + bounds.size.width && mouse.y >= bounds.origin.y && mouse.y < bounds.origin.y + bounds.size.height) { screen = candidate; break; }
                 }
                 const bounds = frame(screen, sel('visibleFrame'));
-                if (bubble.phase === 'hidden') objc.func('objc_msgSend', 'void', ['void *', 'void *', point])(window, sel('setFrameOrigin:'), { x: bounds.origin.x + (bounds.size.width - width - padding * 2) / 2, y: bounds.origin.y + 18 - padding });
+                const x = placement === 'notification' ? bounds.origin.x + bounds.size.width - width - padding - 18 : bounds.origin.x + (bounds.size.width - width - padding * 2) / 2;
+                objc.func('objc_msgSend', 'void', ['void *', 'void *', point])(window, sel('setFrameOrigin:'), { x, y: bounds.origin.y + 18 - padding });
+                if (bubble.phase === 'visible' || bubble.phase === 'showing') return;
                 if (bubble.phase === 'hidden') number(window, sel('setAlphaValue:'), 0);
                 send(window, sel('orderFrontRegardless'));
                 send(root, sel('layoutSubtreeIfNeeded')); send(window, sel('displayIfNeeded'));

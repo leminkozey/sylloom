@@ -44,6 +44,21 @@ test('native indicator failure leaves dictation running and reports once', conte
     close();
 });
 
+test('repeated failure updates neither extend nor resurrect the bubble after microphone failure', context => {
+    context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+    const source = Object.assign(new EventEmitter(), { state: 'starting' });
+    let renders = 0, hidden = 0;
+    const close = attachIndicator(source, assert.fail, () => ({ render() { renders++; }, hide() { hidden++; }, close() {} }));
+    source.emit('update'); source.state = 'error'; source.emit('update');
+    for (let i = 0; i < 8; i++) { context.mock.timers.tick(200); source.emit('update'); }
+    assert.equal(hidden, 1, 'The error must disappear without a second shortcut');
+    const expired = renders;
+    context.mock.timers.tick(4000); source.emit('update');
+    assert.equal(renders, expired, 'Finishing slow cleanup must not reopen the bubble');
+    source.state = 'starting'; source.emit('update'); assert.ok(renders > expired);
+    source.state = 'idle'; source.emit('update'); close();
+});
+
 for (const stage of ['render', 'hide', 'close'] as const) test('indicator ' + stage + ' failure cannot escape into dictation or shutdown', context => {
     context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
     const source = Object.assign(new EventEmitter(), { state: 'recording' });

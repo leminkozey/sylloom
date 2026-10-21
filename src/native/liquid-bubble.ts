@@ -35,7 +35,9 @@ export function createLiquidBubble(options: { layer: unknown; contentLayer: unkn
     let transition: NodeJS.Timeout | undefined;
     const blob = get(cls('CAShapeLayer'), sel('layer'));
     setFrame(blob, sel('setFrame:'), box(0, 0, width, height));
-    object(blob, sel('setFillColor:'), get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 0.075, 0.078, 0.09, 0.98), sel('CGColor')));
+    const workspace = get(cls('NSWorkspace'), sel('sharedWorkspace'));
+    const reducedTransparency = flag(workspace, sel('accessibilityDisplayShouldReduceTransparency'));
+    object(blob, sel('setFillColor:'), get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 0.075, 0.078, 0.09, reducedTransparency ? 0.98 : 0.76), sel('CGColor')));
     const edge = get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 1, 1, 1, 0.14), sel('CGColor'));
     const highlight = get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 1, 1, 1, 0.5), sel('CGColor'));
     // Animation values below retain these colors beyond this autorelease pool.
@@ -80,7 +82,6 @@ export function createLiquidBubble(options: { layer: unknown; contentLayer: unkn
     const shapes = { seed: rounded(20, 20, 10, -8), drop, spread: rounded(width * 230 / 330, height * 112 / 104, height * 56 / 104, height * 54 / 104),
         overshoot: rounded(width * 352 / 330, height * 100 / 104, Math.min(radius * 1.5, height * 50 / 104)), squash: rounded(width * 322 / 330, height * 110 / 104, Math.min(radius * 1.2, height * 55 / 104)), full: rounded(width, height, radius), gone: rounded(4, 4, 2, -16) };
     object(blob, sel('setPath:'), shapes.full);
-    const workspace = get(cls('NSWorkspace'), sel('sharedWorkspace'));
     const array = (items: unknown[]) => {
         const value = get(cls('NSMutableArray'), sel('array'));
         for (const item of items) object(value, sel('addObject:'), item);

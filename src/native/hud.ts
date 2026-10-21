@@ -73,6 +73,7 @@ export function createNativeHud(): HudSurface {
     const bubble = createLiquidBubble({ layer: get(surface, sel('layer')), contentLayer: get(content, sel('layer')), width, height, radius: height / 2,
         onHidden: () => object(window, sel('orderOut:'), null) });
     let closed = false;
+    let lastPhase: IndicatorView['phase'] | undefined;
     const waveform = new Waveform(barCount);
     send(scope, sel('drain'));
 
@@ -94,6 +95,10 @@ export function createNativeHud(): HudSurface {
             if (closed) return;
             const scope = pool();
             try {
+                // A quick second dictation can begin before the success bubble
+                // hides. Anchor that new capture to the cursor's current screen.
+                if (view.phase === 'starting' && lastPhase !== 'starting') position();
+                lastPhase = view.phase;
                 const waiting = view.phase === 'starting' || view.phase === 'processing';
                 const motion = !reducedMotion(workspace, sel('accessibilityDisplayShouldReduceMotion'));
                 const heights = waveform.update(view.phase, view.level, performance.now(), motion);

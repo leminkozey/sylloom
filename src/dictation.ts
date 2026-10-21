@@ -89,6 +89,7 @@ export class DictationService extends EventEmitter {
     private stopRequested = false;
     private canceled = false;
     private committing = false;
+    private recovering = false;
     private previous?: Dictation;
     private input?: CapturedInput;
     private closingTask?: Promise<void>;
@@ -99,7 +100,7 @@ export class DictationService extends EventEmitter {
         super();
         this.unregister = onShutdown(() => this.close());
     }
-    get busy(): boolean { return ['starting', 'recording', 'processing'].includes(this.state); }
+    get busy(): boolean { return this.recovering || ['starting', 'recording', 'processing'].includes(this.state); }
     get status(): string {
         const elapsed = this.current ? timestamp((Date.now() - Date.parse(this.current.startedAt)) / 1000) : '';
         if (this.state === 'recording') return "● DICTATION " + elapsed + ' · ' + DICTATION_SHORTCUT + ' Stop · Ctrl+' + ALT_KEY + '+Esc Cancel';
@@ -134,6 +135,7 @@ export class DictationService extends EventEmitter {
     private reportError(error: unknown): void { this.update('error', errorMessage(error), true); }
     async toggle(): Promise<void> {
         if (this.closing) return;
+        if (this.recovering) { await this.operation; return; }
         if (this.state === 'starting') { this.stopRequested = true; return; }
         if (this.state === 'processing') { notify("Dictation is still processing."); return; }
         if (this.state !== 'recording' && this.blocked()) { notify("Recording or processing is active. Dictation will be available afterwards."); return; }
@@ -317,6 +319,8 @@ export class DictationService extends EventEmitter {
         if (item.id === this.current?.id) { this.current = undefined; this.update('idle', "Dictation deleted"); }
     }
     private async handleFailure(error: unknown): Promise<void> {
+        this.recovering = true;
+        if (!this.closing && !this.canceled) this.update('error', errorMessage(error));
         try { await this.failed(error); }
         catch (cause) {
             // Storage can also fail while recording the original error. Keep the
@@ -324,6 +328,7 @@ export class DictationService extends EventEmitter {
             // an operation started by a shortcut or terminal action.
             this.reportError(new Error(errorMessage(error) + ' · Recovery could not be saved: ' + errorMessage(cause) + ' · Local files were preserved.'));
         }
+        finally { this.recovering = false; this.emit('update'); }
     }
     private async failed(error: unknown): Promise<void> {
         this.input?.target?.close(); this.input = undefined;
@@ -367,18 +372,23 @@ export class DictationService extends EventEmitter {
         if (this.current) await save(this.current);
     }
     private async cancelWithError(error: unknown): Promise<void> {
+        if (this.recovering || this.closing || this.canceled || !this.busy) return;
+        const recording = this.state === 'recording';
         this.controller?.abort(error);
-        if (this.state === 'recording') {
-            this.update('processing', "Stopping microphone…");
+        this.recovering = true;
+        this.update('error', errorMessage(error));
+        if (recording) {
             this.operation = this.handleFailure(error); await this.operation;
         }
     }
     async cancel(): Promise<void> {
         if (!this.busy) return;
         if (this.committing) { notify('Delivering text…'); return; }
+        const recording = this.state === 'recording';
         this.canceled = true; this.controller?.abort(new Error("Dictation canceled."));
-        if (this.state === 'recording') {
-            this.update('processing', "Canceling dictation…");
+        this.recovering = true;
+        this.update('idle', "Canceling dictation…");
+        if (recording) {
             this.operation = this.handleFailure(new Error("Dictation canceled."));
         }
         await this.operation;

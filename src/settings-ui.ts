@@ -17,8 +17,8 @@ type Switch = { key: BooleanKey; name: string; hint: string };
 const groups = {
     dictation: { title: 'Dictation', switches: [
         { key: 'dictationAutoInsert', name: 'Insert into focused input', hint: 'Recheck focus before inserting. Copy to clipboard if insertion fails.' },
-        { key: 'dictationIndicator', name: 'Floating waveform', hint: 'Show the waveform at the bottom of the screen while dictating.' },
-        { key: 'dictationNotifications', name: 'Dictation notifications', hint: 'Show desktop notifications for dictation results and processing errors.' },
+        { key: 'dictationIndicator', name: 'Floating waveform', hint: 'Show a translucent waveform on the display containing the mouse pointer.' },
+        { key: 'dictationNotifications', name: 'Dictation notifications', hint: 'Show native notices on the mouse pointer’s display for results and errors.' },
     ] },
     shortcuts: { title: 'Global shortcuts', switches: [
         { key: 'globalShortcuts', name: 'Global shortcuts', hint: 'Ctrl+' + ALT_KEY + '+Space starts/stops dictation. Ctrl+' + ALT_KEY + '+Esc cancels.' },
