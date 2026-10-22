@@ -1,3 +1,6 @@
+import { bubbleNotice } from './bubble-feedback.js';
+import { recordBubbleDiagnostic } from './notification.js';
+import { recordingSeconds } from './indicator-motion.js';
 import { EventEmitter } from 'node:events';
 import { Recorder } from './recorder.js';
 import { createSession, saveSettings } from './store.js';
@@ -8,6 +11,8 @@ import { CallDetector, enabledCallApps } from './calls.js';
 import type { CallSnapshot } from './calls.js';
 import { createCallPopup } from './native/call-popup.js';
 import type { Popup } from './native/call-popup.js';
+import { createNativeHud } from './native/hud.js';
+import type { HudSurface } from './indicator.js';
 import { notify } from './clipboard.js';
 import { onShutdown } from './lifecycle.js';
 import { errorMessage } from './types.js';
@@ -24,7 +29,12 @@ export class MeetingBridge extends EventEmitter {
     private closeTask?: Promise<void>;
     private closed = false;
     private unregister = () => {};
-    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector; origin: string; started: boolean; failure?: string };
+    private capture?: { session: Session; recorder: Recorder; closeControl?: () => Promise<void>; callId?: number; detector?: CallDetector; origin: string; started: boolean; failure?: string; awaitingConnection: boolean; app?: CallSnapshot['app'] };
+    private captureHud?: HudSurface;
+    private hudTimer?: NodeJS.Timeout;
+    private hudClose?: NodeJS.Timeout;
+    private closingHud?: HudSurface;
+    private pausing = false;
     private startingCapture = false;
     private captureStart?: Promise<string>;
     private stoppingCapture?: Promise<string | undefined>;
@@ -46,7 +56,7 @@ export class MeetingBridge extends EventEmitter {
     private lastCall = '';
     progress = '';
     constructor(readonly config: Settings, readonly service: DictationService, private screen?: Screen,
-        private options: { native?: boolean; detector?: CallDetector; popup?: Popup; recorder?: (session: Session) => Recorder } = {}) { super(); }
+        private options: { native?: boolean; detector?: CallDetector; popup?: Popup; recorder?: (session: Session) => Recorder; hud?: () => HudSurface } = {}) { super(); }
     private changed(): void { this.revision++; this.emit('update'); }
     get recording(): boolean { return Boolean(this.capture || this.startingCapture); }
     get working(): boolean { return Boolean(this.screen?.taskActive); }
@@ -60,7 +70,7 @@ export class MeetingBridge extends EventEmitter {
         return ['Started from: ' + capture.origin,
             !capture.callId || !this.config.callAutoStop ? 'Auto-stop Off. Stop this recording manually.' :
                 !owner || owner.state === 'unknown' ? 'Auto-stop unavailable, recording continues. Stop manually.' :
-                !capture.detector?.canAutoStop(owner.callId) ? 'Waiting for a confirmed call before auto-stop. Recording continues; stop manually if needed.' :
+                capture.awaitingConnection || !capture.detector?.canAutoStop(owner.callId) ? 'Waiting for a confirmed call before auto-stop. Recording continues; stop manually if needed.' :
                 owner.state === 'idle' ? 'This call ended. Waiting for stable hangup before stopping.' : 'Auto-stop follows this call only. A new call cannot take over this recording.'];
     }
     start(): Promise<void> { return this.starting ||= this.initialize(); }
@@ -126,8 +136,9 @@ export class MeetingBridge extends EventEmitter {
     }
     private showPopup(title: string, detail: string, actions: { id: string; label: string }[], fallback = true): boolean {
         if (this.closed || (this.options.native === false && !this.options.popup)) return false;
+        if (/could not start|not completed|interrupted/i.test(title)) { recordBubbleDiagnostic(title + ' · ' + detail); detail = bubbleNotice(title + ' ' + detail).detail; }
         try {
-            this.popup ||= this.options.popup || createCallPopup(id => { void this.popupAction(id).catch(error => { this.progress = errorMessage(error); notify(this.progress); }); });
+            this.popup ||= this.options.popup || createCallPopup(id => { void this.popupAction(id).catch(error => { this.progress = errorMessage(error); this.changed(); this.showPopup('Action not completed', this.progress, [{ id: 'dismiss', label: 'Dismiss' }]); }); });
             this.popup.show(title, detail, actions);
             this.offeredEvent = undefined;
             return true;
@@ -139,11 +150,17 @@ export class MeetingBridge extends EventEmitter {
     }
     private callChanged(): void {
         const call = this.call;
+        const capture = this.capture;
+        if (capture?.app === 'teams' && call.app === 'teams' && call.state === 'joining' &&
+            call.callId === capture.callId && capture.detector === this.detector && !this.detector?.canAutoStop(call.callId)) capture.awaitingConnection = true;
+        if (capture?.awaitingConnection && call.app === capture.app && call.state === 'active' && this.detector === capture.detector && this.detector?.canAutoStop(call.callId)) {
+            capture.callId = call.callId; capture.awaitingConnection = false;
+        }
         if (['ringing', 'active', 'joining'].includes(call.state) && this.offeredEvent) { this.offeredEvent = undefined; this.popup?.hide(); }
         const owner = this.capture?.detector === this.detector && this.capture?.callId ? this.detector?.stateFor(this.capture.callId) : undefined;
         const key = JSON.stringify([call.state, call.source, call.callId, call.message, call.accessibility]);
         if (key !== this.lastCall) { this.lastCall = key; this.changed(); }
-        const canStop = Boolean(owner && this.detector?.canAutoStop(owner.callId));
+        const canStop = Boolean(owner && !this.capture?.awaitingConnection && this.detector?.canAutoStop(owner.callId));
         if (owner?.state !== 'idle' || !canStop) { clearTimeout(this.callEndTimer); this.callEndTimer = undefined; }
         if (call.state === 'joining' && this.offeredCall !== undefined) {
             if (!this.capture) { this.shownCalls.delete(this.offeredCall); this.popup?.hide(); }
@@ -157,7 +174,7 @@ export class MeetingBridge extends EventEmitter {
             this.callEndTimer = setTimeout(() => {
                 this.callEndTimer = undefined;
                 const owner = this.capture?.detector === this.detector && this.capture?.callId ? this.detector?.stateFor(this.capture.callId) : undefined;
-                if (this.config.callAutoStop && owner?.state === 'idle' && this.detector?.canAutoStop(owner.callId) && this.capture?.session.id === id) {
+                if (this.config.callAutoStop && !this.capture?.awaitingConnection && owner?.state === 'idle' && this.detector?.canAutoStop(owner.callId) && this.capture?.session.id === id) {
                     void this.stopRecording().catch(error => { this.progress = errorMessage(error); this.changed(); });
                 }
             }, 1500); this.callEndTimer.unref();
@@ -179,11 +196,12 @@ export class MeetingBridge extends EventEmitter {
         if (action === 'record') {
             // The explicit Record click remains valid while Teams switches from
             // its preview to the joined room and observation briefly changes.
-            await this.startRecording();
+            try { await this.startRecording(); }
+            catch (error) { this.progress = errorMessage(error); this.changed(); this.showPopup('Recording could not start', this.progress, [{ id: 'record', label: 'Try again' }, { id: 'dismiss', label: 'Dismiss' }]); }
         }
         this.offeredCall = undefined;
         if (action === 'stop') await this.stopRecording();
-        if (action === 'finish') { this.finishRequested = true; this.changed(); notify('Open Sylloom to name the recording and choose what to keep.'); }
+        if (action === 'finish') { this.finishRequested = true; this.changed(); }
         if (action === 'later') {
             const id = this.call.callId; clearTimeout(this.later);
             this.later = setTimeout(() => { if (this.call.callId === id) { this.shownCalls.delete(id); this.callChanged(); } }, 60000); this.later.unref();
@@ -214,11 +232,14 @@ export class MeetingBridge extends EventEmitter {
         if (this.screen) this.screen.recordingActive = true;
         this.progress = 'Starting microphone and system audio…'; this.changed();
         try {
+            this.offeredEvent = undefined; this.offeredCall = undefined;
+            try { this.popup?.hide(); } catch { /* A stale prompt must not block capture. */ }
             await this.service.releaseModels();
             if (this.closed) throw new Error('The bridge is closing.');
             const session = await createSession();
             const recorder = this.options.recorder?.(session) || new Recorder(session, this.config);
             const capture = this.capture = { session, recorder, detector: owner?.detector, callId: owner?.call.callId, started: false, failure: undefined as string | undefined,
+                app: owner?.call.app, awaitingConnection: Boolean(owner && (owner.call.state !== 'active' || !owner.detector?.canAutoStop(owner.call.callId))),
                 origin: owner ? (owner.call.app === 'apple' ? 'FaceTime / iPhone' : owner.call.app === 'whatsapp' ? 'WhatsApp' : 'Teams') + ' · call ' + owner.call.callId : 'Manual recording' };
             if (this.closed) throw new Error('The bridge is closing.');
             recorder.on('stopRequested', () => { void this.stopRecording().catch(error => { this.progress = errorMessage(error); }); });
@@ -238,7 +259,7 @@ export class MeetingBridge extends EventEmitter {
             this.capture.started = true;
             this.progress = 'Recording microphone and system audio';
             this.changed();
-            this.showPopup('Recording meeting', 'Microphone and system audio stay on this computer.', [{ id: 'stop', label: 'Stop' }, { id: 'dismiss', label: 'Hide' }]);
+            this.showCaptureHud();
             return session.id;
         } catch (error) {
             await this.stopRecording();
@@ -251,6 +272,7 @@ export class MeetingBridge extends EventEmitter {
     stopRecording(): Promise<string | undefined> {
         if (this.stoppingCapture) return this.stoppingCapture;
         const current = this.capture; if (!current) return Promise.resolve(undefined);
+        this.hideCaptureHud();
         this.stoppingCapture = (async () => {
             try { await current.recorder.stop(); }
             finally {
@@ -274,9 +296,41 @@ export class MeetingBridge extends EventEmitter {
         return { capture: this.capture?.session.id, processing: this.working || this.service.busy, progress: this.progress,
             call: this.call, bridgeEnabled: this.config.bridgeEnabled, calendar: this.calendar };
     }
+    private showCaptureHud(): void {
+        if (!this.config.dictationIndicator || (this.options.native === false && !this.options.hud)) return;
+        clearTimeout(this.hudClose);
+        try { this.closingHud?.close(); } catch {} this.closingHud = undefined;
+        let failed = false;
+        const render = () => {
+            const capture = this.capture; if (!capture?.started) return;
+            try {
+                this.captureHud ||= this.options.hud?.() || createNativeHud({ onTogglePause: () => { void this.togglePause(); } });
+                this.captureHud.render({ mode: 'meeting', phase: capture.session.state === 'paused' ? 'paused' : 'recording',
+                    level: Math.max(capture.recorder.levels?.mic || 0, capture.recorder.levels?.system || 0), elapsed: recordingSeconds(capture.session) });
+            } catch (error) { failed = true; this.hideCaptureHud(); notify('Recording indicator unavailable. Use Recording controls in Sylloom. ' + errorMessage(error)); }
+        };
+        render(); clearInterval(this.hudTimer);
+        if (!failed) { this.hudTimer = setInterval(render, 50); this.hudTimer.unref(); }
+    }
+    private hideCaptureHud(): void {
+        clearInterval(this.hudTimer);
+        const current = this.captureHud; this.captureHud = undefined;
+        if (!current) return;
+        clearTimeout(this.hudClose); try { this.closingHud?.close(); } catch {} this.closingHud = current;
+        try { current?.hide(); } catch { /* Recording cleanup still runs. */ }
+        this.hudClose = setTimeout(() => { try { current.close(); } catch {} if (this.closingHud === current) this.closingHud = undefined; }, 350); this.hudClose.unref();
+    }
+    async togglePause(): Promise<void> {
+        if (this.pausing || !this.capture?.started || this.stoppingCapture) return;
+        this.pausing = true;
+        try { await this.capture.recorder.pause(); this.changed(); }
+        catch (error) { this.progress = errorMessage(error); this.changed(); notify('Could not change recording pause state: ' + this.progress); }
+        finally { this.pausing = false; }
+    }
     close(): Promise<void> { return this.closeTask ||= this.finishClose(); }
     private async finishClose(): Promise<void> {
         this.closed = true; this.calendarAbort.abort(); clearTimeout(this.callEndTimer); await this.starting?.catch(() => {}); this.unregister(); clearTimeout(this.later); clearInterval(this.calendarTimer); clearInterval(this.reminderTimer); this.popup?.close();
+        this.hideCaptureHud();
         await this.refreshing?.catch(() => {});
         await this.detector?.close(); await this.stopRecording(); await this.captureStart?.catch(() => {}); await this.stopRecording();
     }

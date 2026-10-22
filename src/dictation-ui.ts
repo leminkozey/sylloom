@@ -1,10 +1,10 @@
 import { Screen } from './terminal/screen.js';
 import { DictationService } from './dictation.js';
-import { libraryMenu, editLibraryMetadata } from './library-ui.js';
+import { editLibraryMetadata } from './library-ui.js';
 import { loadLibrary } from './library.js';
 import type { Dictation } from './dictation.js';
 import { formatLabels } from './formatter.js';
-import { COPY_SHORTCUT, DICTATION_SHORTCUT } from './hotkey.js';
+import { COPY_SHORTCUT } from './hotkey.js';
 import type { DictationFormat, Settings } from './types.js';
 import { errorMessage } from './types.js';
 import { MeetingBridge } from './meeting-bridge.js';
@@ -75,26 +75,5 @@ export async function dictationItemMenu(screen: Screen, service: DictationServic
                 if (confirmed === 'delete') { await service.remove(item); return; }
             }
         } catch (error) { await screen.notice("Dictation", errorMessage(error)); }
-    }
-}
-
-export async function dictationMenu(screen: Screen, service = screen.dictation!): Promise<void> {
-    for (;;) {
-        const saved = (await loadLibrary()).items.find(item => item.kind === 'dictation')?.data as Dictation | undefined;
-        const latest = () => service.current && (!saved || service.current.startedAt >= saved.startedAt) ? service.current : saved;
-        const selected = await screen.select("Dictation", () => [
-            { value: 'toggle', name: service.state === 'recording' ? "Stop dictation and insert / copy" : service.busy ? "Processing…" : "Record microphone", hint: DICTATION_SHORTCUT + " works in any app." },
-            ...(service.busy ? [{ value: 'cancel', name: "Cancel dictation" }] : []),
-            ...(latest() && !service.busy ? [{ value: 'current', name: 'Latest dictation · ' + (latest()!.outcome || latest()!.state), hint: latest()!.error || latest()!.delivery?.reason || latest()!.text?.slice(0, 100) || 'No text yet. Open to inspect or retry the saved audio.' }] : []),
-            { value: 'history', name: "Saved dictations" }, { value: 'back', name: "Back" },
-        ], { back: true, detail: () => service.message,
-            before: () => service.recorder ? ["Microphone: " + service.recorder.current.mic + ' · ' + service.recorder.health.mic, "Level: " + Math.round(service.recorder.levels.mic * 100) + '%', ''] : [],
-            footer: "Enter Select · F8 Start/stop · Esc Back · Ctrl+C Quit", shortcuts: { f8: 'toggle' } });
-        if (['back', 'quit', 'settings'].includes(selected)) return;
-        if (selected === 'toggle') { void service.toggle().catch(error => notify(errorMessage(error))); }
-        if (selected === 'cancel') await service.cancel();
-        if (selected === 'current' && latest()) await dictationItemMenu(screen, service, latest()!);
-        if (selected === 'history') await libraryMenu(screen, async item => { await dictationItemMenu(screen, service, item.data as Dictation); }, 'dictation');
-        if (screen.quitRequested) return;
     }
 }

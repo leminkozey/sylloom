@@ -163,7 +163,8 @@ export class CallDetector extends EventEmitter {
                 this.retiredStates.delete(oldest); this.teamsConfirmedCalls.delete(oldest);
             }
         }
-        if (app === 'teams' && active && ['local-api', 'accessibility'].includes(source)) this.teamsConfirmedCalls.add(callId);
+        if (app === 'teams' && state === 'active' && ['local-api', 'accessibility'].includes(source)) this.teamsConfirmedCalls.add(callId);
+        if (app === 'teams' && state === 'joining' && this.apiJoinedCall !== callId) this.teamsConfirmedCalls.delete(callId);
         const next: CallSnapshot = { state, source, message, since: state === previous?.state ? previous.since : new Date().toISOString(), callId, accessibility: this.trusted, app };
         this.states.set(app, next);
         const calls = [...this.states.values()];

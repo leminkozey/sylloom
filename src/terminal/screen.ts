@@ -8,9 +8,10 @@ import { onShutdown } from '../lifecycle.js';
 import { renderMarkdown, wrapText } from './markdown.js';
 import { name, version, mark } from '../brand.js';
 import renderList from './render-list.js';
+import type { ListColumn } from './render-list.js';
 
 export type Choice = { value: string; name: string; hint?: string; toggle?: boolean; state?: string;
-    action?: boolean; group?: string; section?: string; unavailable?: string; requires?: string };
+    action?: boolean; group?: string; section?: string; unavailable?: string; requires?: string; cells?: string[] };
 type SelectionOptions = {
     detail?: string | (() => string);
     before?: () => string[];
@@ -20,6 +21,10 @@ type SelectionOptions = {
     complete?: () => string | undefined;
     initialValue?: string;
     activateWithSpace?: boolean;
+    columns?: ListColumn[];
+    inlineHints?: boolean;
+    onToggle?: (value: string) => void;
+    onDelete?: (value: string) => void;
 };
 
 export function fit(text: string, width: number): string {
@@ -126,10 +131,13 @@ export class Screen {
                 const actions = current.filter(row => row.action || ['save', 'back'].includes(row.value));
                 const rows = current.filter(row => !actions.includes(row));
                 const values = rows.some(row => row.toggle !== undefined || row.state !== undefined || row.unavailable);
+                const inline = options.inlineHints !== false && !options.columns && !rows.some(row => row.cells) && this.width >= 68 && rows.some(row => row.hint);
+                const labelWidth = Math.min(32, Math.floor(this.width * .38), Math.max(18, ...rows.map(row => stringWidth(row.name) + 2)));
+                const columns = options.columns || (inline ? [{ title: '', width: labelWidth }, ...(values ? [{ title: '', width: Math.min(20, Math.floor(this.width / 4)) }] : []), { title: '' }] : values ? [{ title: '' }, { title: '', width: Math.min(20, Math.max(12, Math.floor(this.width / 4))) }] : undefined);
                 const output = renderList({ rows: rows.map(row => ({ value: row.value,
-                    cells: [row.name, row.unavailable ? 'Unavailable' : row.state ?? (row.toggle === undefined ? '' : row.toggle ? 'On' : 'Off')], group: row.group, section: row.section })),
-                    columns: values ? [{ title: '' }, { title: '', width: Math.min(20, Math.max(12, Math.floor(this.width / 4))) }] : undefined,
-                    actions, selected: choice?.value || '', width: this.width, height: this.capacity - before.length, detail: hint });
+                    cells: row.cells || (inline ? [row.name, ...(values ? [row.unavailable ? 'Unavailable' : row.state ?? (row.toggle === undefined ? '' : row.toggle ? 'On' : 'Off')] : []), row.value === choice?.value ? hint : ''] : [row.name, row.unavailable ? 'Unavailable' : row.state ?? (row.toggle === undefined ? '' : row.toggle ? 'On' : 'Off')]), group: inline && !values ? 'menu' : row.group, section: row.section })),
+                    columns,
+                    actions, selected: choice?.value || '', width: this.width, height: this.capacity - before.length, ...(inline ? {} : { detail: hint }) });
                 const lines = [...before, ...output.trimEnd().split('\n').map(line => line.startsWith('  ') ? line.slice(2) : line)];
                 const detail = typeof options.detail === 'function' ? options.detail() : options.detail || '';
                 this.frame(title, detail, lines, options.footer);
@@ -139,12 +147,15 @@ export class Screen {
                 if (key.name === 'escape' && options.back) { done('back'); return; }
                 if (this.width < 32 || (process.stdout.rows || 24) < 16) return;
                 if (key.name === 'f2') { done('settings'); return; }
+                if (key.ctrl && options.shortcuts?.['ctrl+' + key.name]) { done(options.shortcuts['ctrl+' + key.name]!); return; }
+                if (options.onDelete && ['delete', 'backspace'].includes(key.name || '') && current[selected]?.cells) { options.onDelete(current[selected]!.value); this.redraw?.(); return; }
                 if (key.name === 'up' || (key.ctrl && key.name === 'p')) selected = (selected - 1 + current.length) % Math.max(1, current.length);
                 else if (key.name === 'down' || (key.ctrl && key.name === 'n')) selected = (selected + 1) % Math.max(1, current.length);
                 else if ((key.name === 'return' || key.name === 'enter' || options.activateWithSpace && (text === ' ' || key.name === 'space') || current[selected]?.toggle !== undefined && (text === ' ' || key.name === 'space' || key.name === 'left' || key.name === 'right')) && current[selected]) {
                     const row = current[selected]!;
                     if (row.unavailable || row.requires && !current.find(required => required.value === row.requires)?.toggle) { this.redraw?.(); return; }
                     if (row.toggle !== undefined && (key.name === 'left' && !row.toggle || key.name === 'right' && row.toggle)) return;
+                    if (options.onToggle && row.toggle !== undefined && (text === ' ' || ['space', 'left', 'right'].includes(key.name || ''))) { options.onToggle(row.value); this.redraw?.(); return; }
                     done(row.value); return;
                 }
                 else if (options.shortcuts?.[key.name || ''] || (text && options.shortcuts?.[text])) { done((options.shortcuts[key.name || ''] || options.shortcuts[text])!); return; }

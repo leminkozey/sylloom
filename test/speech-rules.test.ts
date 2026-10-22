@@ -97,7 +97,7 @@ test('the dictation vocabulary is sent locally and participates in checkpoint id
     finally { globalThis.fetch = previousFetch; await transcription.close(); }
 });
 
-test('snippets validate the trigger before opening a long editor and provide a scrollable plain preview', async () => {
+test('snippet tables validate triggers before editing and save multiline text without extra previews', async () => {
     await rules.saveSpeechRules(rules.emptySpeechRules());
     let edited = false;
     let actions = ['snippets', 'add', 'back', 'back'];
@@ -106,11 +106,11 @@ test('snippets validate the trigger before opening a long editor and provide a s
     }, notice: async () => {} } as unknown as import('../src/terminal/screen.js').Screen;
     await speechRulesMenu(invalidScreen); assert.equal(edited, false);
     const body = Array.from({ length: 25 }, (_, index) => 'Line ' + index).join('\n');
-    actions = ['snippets', 'add', 'use', 'back', 'save'];
+    actions = ['snippets', 'add', 'save'];
     let inputs = ['Textbaustein Long', body], preview = '';
     const screen = { quitRequested: false, select: async () => actions.shift(), input: async () => inputs.shift(),
         view: async (_title: string, text: () => string, options: { markdown: boolean }) => { assert.equal(options.markdown, false); preview = text(); }, notice: async () => {} } as unknown as import('../src/terminal/screen.js').Screen;
-    await speechRulesMenu(screen); assert.ok(preview.includes('Line 24'));
+    await speechRulesMenu(screen); assert.equal(preview, '', 'No extra preview confirmation between editing and saving');
     assert.equal((await rules.loadSpeechRules()).snippets[0]?.text, body);
 });
 
@@ -124,6 +124,25 @@ test('command-line rules preserve multiline files and support safe previews and 
         assert.equal(command(['disable']).status, 0);
         assert.equal(JSON.parse(command(['preview', 'Textbaustein Check.']).stdout).after, 'Textbaustein Check.');
     } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('personal words open as an editable table with direct toggles, deletion and one explicit save', async () => {
+    const profile = rules.addCorrection(rules.addWord(rules.emptySpeechRules(), 'Café'), 'term', 'Preferred term');
+    await rules.saveSpeechRules(profile);
+    let page = 0;
+    const screen = { quitRequested: false, select: async (_title: string, choices: () => any[], options: any) => {
+        const rows = choices(); assert.ok(!rows.some(row => row.value === 'preview'));
+        if (page++ === 0) {
+            assert.equal(options.columns[0].title, 'Spelling'); assert.deepEqual(rows[0].cells, ['Café', 'On']);
+            options.onToggle(rows[0].value); assert.equal(choices()[0].cells.at(-1), 'Off');
+            assert.equal((await rules.loadSpeechRules()).words[0]!.enabled, true, 'The on-screen draft must not save early');
+            return 'next-kind';
+        }
+        assert.equal(options.columns[0].title, 'When you say'); assert.deepEqual(rows[0].cells, ['term', 'Preferred term', 'On']);
+        options.onDelete(rows[0].value); assert.ok(!choices().some(row => row.cells)); return 'save';
+    }, notice: async (_title: string, message: string) => assert.fail(message) } as unknown as import('../src/terminal/screen.js').Screen;
+    await speechRulesMenu(screen);
+    const saved = await rules.loadSpeechRules(); assert.equal(saved.words[0]!.enabled, false); assert.equal(saved.corrections.length, 0);
 });
 
 after(async () => { await rm(root, { recursive: true, force: true }); });

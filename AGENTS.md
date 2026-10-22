@@ -27,12 +27,16 @@ repositories or change parent-workspace remotes.
 - Insights stay local. Sharing opens a reviewed X draft with aggregate counts only;
   never include transcript text, app context or automatically publish a post.
 - Audio is transcribed only after capture stops.
-- Global shortcuts use macOS Carbon or Windows RegisterHotKey through Koffi. Do not log unrelated keys.
+- Global shortcuts use macOS Carbon or Windows RegisterHotKey through Koffi.
+  Single modifier keys query only their configured native key state. Do not log
+  unrelated keys. Push-to-Talk release during startup must still finish capture.
 - Windows targets Windows 11 x64 on CPU. Keep native DLL loading lazy and isolated
   from macOS. Windows setup is per-user and must not require admin access.
-- The floating dictation indicator shows only a waveform inside a compact bubble,
-  with the same liquid entry/exit as call popups. No labels, buttons or timer;
-  preserve keyboard focus and click-through behavior. Respect Reduce Motion.
+- Dictation uses a compact waveform bubble with the liquid entry/exit of call
+  popups; preserve focus and click-through. Meeting capture adds a status dot
+  and hover/click pause/resume without activation. Do not duplicate routine
+  capture states in desktop notices. Respect Reduce Motion. New processing
+  animation stays in preview until the user's visual approval.
 - Public source archives use the allowlist in scripts/release.ts. Never archive
   the entire workspace or include local state, binaries, model files or Git history.
 - The project uses the MIT License in LICENSE. Keep it in source archives and

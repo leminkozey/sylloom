@@ -198,7 +198,7 @@ test('only the call that started capture may stop it, even when another app owns
     } finally { await bridge.close(); await service.close(); }
 });
 
-test('a new call in the same app cannot erase the captured call hangup during auto-stop debounce', async () => {
+test('a new call and its preview in the same app cannot erase the captured call hangup during auto-stop debounce', async () => {
     const calls = new CallDetector(); calls.start = () => {};
     const config = { ...defaults, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
     const service = new DictationService(config); let recorder!: FakeRecorder;
@@ -207,7 +207,10 @@ test('a new call in the same app cannot erase the captured call hangup during au
     try {
         await bridge.start(); api(true); const owner = calls.snapshot.callId;
         const id = await bridge.startRecording();
-        api(false); api(true);
+        api(false);
+        calls.setState('ringing', 'accessibility', 'Next Teams call');
+        calls.setState('joining', 'accessibility', 'Next Teams preview');
+        api(true);
         assert.notEqual(calls.snapshot.callId, owner); assert.equal(calls.snapshot.state, 'active');
         assert.equal(calls.stateFor(owner)?.state, 'idle');
         await delay(1650);

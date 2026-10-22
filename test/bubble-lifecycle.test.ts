@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createNotifications } from '../src/notification.js';
 import { attachIndicator } from '../src/indicator.js';
-import type { Popup } from '../src/native/call-popup.js';
+import type { BubbleNotice } from '../src/bubble-feedback.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'sylloom-bubbles-'));
 process.env.SYLLOOM_HOME = root;
@@ -28,14 +28,17 @@ test('missing microphone dismisses feedback before slow cleanup and retains the 
     });
     context.mock.method(DictationModels.prototype, 'prewarm', async () => false);
     const service = new DictationService({ ...defaults, dictationNotifications: false });
-    const detach = attachIndicator(service, assert.fail, () => ({ render() { renders++; }, hide() { hidden++; }, close() {} }));
+    const views: import('../src/indicator.js').IndicatorView[] = [];
+    const detach = attachIndicator(service, assert.fail, () => ({ render(view) { renders++; views.push(view); }, hide() { hidden++; }, close() {} }));
     service.on('update', () => { if (service.state === 'error') failed(); });
     const operation = service.toggle();
     try {
         await failure;
         assert.equal(service.busy, true, 'Native cleanup is still pending');
         assert.match(service.message, /No audio device/);
-        context.mock.timers.tick(1500); assert.equal(hidden, 1);
+        assert.equal(views.some(view => view.phase === 'recording'), false, 'No active recording wave before a known missing microphone');
+        assert.deepEqual(views.at(-1), { phase: 'error', level: 0, feedback: 'microphone' });
+        context.mock.timers.tick(2100); assert.equal(hidden, 1);
         const expired = renders, id = service.current!.id;
         const repeated = service.toggle();
         assert.equal(service.current!.id, id); assert.equal(discoveries, 1); assert.equal(opens, 0);
@@ -48,19 +51,13 @@ test('missing microphone dismisses feedback before slow cleanup and retains the 
     } finally { release(); await operation; detach(); await service.close(); }
 });
 
-test('notification updates survive an interrupted hide and expire exactly once', async context => {
-    context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
-    let shown = 0, hidden = 0, closed = 0, loaded = 0;
-    const notifications = createNotifications(async () => { loaded++; return { show() { shown++; }, hide() { hidden++; }, close() { closed++; } }; });
-    await notifications.show('First'); context.mock.timers.tick(3900);
-    await notifications.show('Second'); context.mock.timers.tick(200);
-    assert.equal(hidden, 0); assert.equal(shown, 2); assert.equal(loaded, 1);
-    notifications.hide(); context.mock.timers.tick(100);
-    await notifications.show('Third'); context.mock.timers.tick(350);
-    assert.equal(closed, 0, 'An old close timeout must not destroy the new notification');
-    context.mock.timers.tick(3650); assert.equal(hidden, 2);
-    context.mock.timers.tick(350); assert.equal(closed, 1);
-    notifications.close(); assert.equal(closed, 1);
+test('notification delivery uses friendly copy and no native close button or corner placement', async () => {
+    const notices: BubbleNotice[] = []; let hidden = 0;
+    const notifications = createNotifications(async () => ({ show(notice) { notices.push(notice); }, hide() { hidden++; } }));
+    await notifications.show('Global shortcut is unavailable (macOS -9878)');
+    assert.equal(notices.length, 1); assert.equal(notices[0]!.title, 'Shortcut unavailable');
+    assert.doesNotMatch(JSON.stringify(notices), /9878|macOS/);
+    notifications.hide(); assert.equal(hidden, 1); notifications.close();
 });
 
 test('cancel during slow device discovery dismisses the bubble without waiting for the driver', { timeout: 5000 }, async context => {
@@ -83,16 +80,17 @@ test('cancel during slow device discovery dismisses the bubble without waiting f
     } finally { release(); await operation; detach(); await service.close(); }
 });
 
-test('late native loading shows only the newest message and closes on shutdown', async () => {
-    let resolve!: (surface: Popup) => void, closed = 0;
-    const shown: string[] = [], pending = new Promise<Popup>(done => { resolve = done; });
+test('late native loading shows only the newest friendly message and cannot display after shutdown', async () => {
+    type Sink = { show(notice: BubbleNotice): void; hide(): void };
+    let resolve!: (surface: Sink) => void;
+    const shown: string[] = [], pending = new Promise<Sink>(done => { resolve = done; });
     const notifications = createNotifications(() => pending);
-    const first = notifications.show('Stale'), last = notifications.show('Current');
-    resolve({ show(_title, message) { shown.push(message); }, hide() {}, close() { closed++; } });
-    await Promise.all([first, last]); assert.deepEqual(shown, ['Current']);
-    notifications.close(); assert.equal(closed, 1);
+    const first = notifications.show('Microphone unavailable'), last = notifications.show('Copied');
+    resolve({ show(notice) { shown.push(notice.title); }, hide() {} });
+    await Promise.all([first, last]); assert.deepEqual(shown, ['Copied to clipboard']);
+    notifications.close();
     const stopped = createNotifications(() => pending); stopped.close(); await stopped.show('Ignored');
-    assert.deepEqual(shown, ['Current']);
+    assert.deepEqual(shown, ['Copied to clipboard']);
 });
 
 after(async () => { await rm(root, { recursive: true, force: true }); });

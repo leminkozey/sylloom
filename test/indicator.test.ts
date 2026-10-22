@@ -46,11 +46,11 @@ test('native indicator failure leaves dictation running and reports once', conte
 
 test('repeated failure updates neither extend nor resurrect the bubble after microphone failure', context => {
     context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
-    const source = Object.assign(new EventEmitter(), { state: 'starting' });
+    const source = Object.assign(new EventEmitter(), { state: 'starting', message: 'No audio device available for mic.' });
     let renders = 0, hidden = 0;
     const close = attachIndicator(source, assert.fail, () => ({ render() { renders++; }, hide() { hidden++; }, close() {} }));
     source.emit('update'); source.state = 'error'; source.emit('update');
-    for (let i = 0; i < 8; i++) { context.mock.timers.tick(200); source.emit('update'); }
+    for (let i = 0; i < 12; i++) { context.mock.timers.tick(200); source.emit('update'); }
     assert.equal(hidden, 1, 'The error must disappear without a second shortcut');
     const expired = renders;
     context.mock.timers.tick(4000); source.emit('update');
@@ -76,4 +76,21 @@ for (const stage of ['render', 'hide', 'close'] as const) test('indicator ' + st
     assert.doesNotThrow(detach); assert.doesNotThrow(detach);
     assert.equal(warnings.length, 1); assert.equal(source.listenerCount('update'), 0);
     assert.doesNotThrow(() => context.mock.timers.tick(5000));
+});
+
+
+test('microphone failures request only the microphone morph, with no caption', () => {
+    const view = indicatorView({ state: 'error', message: 'No audio device available for mic.' });
+    assert.deepEqual(view, { phase: 'error', level: 0, feedback: 'microphone' });
+    assert.equal(view?.notice, undefined);
+});
+
+test('only unexpected clipboard fallback expands the success bubble', () => {
+    const source = { state: 'ready', message: 'Copied · Paste with Cmd+V', current: { delivery: { kind: 'clipboard' } }, config: { dictationAutoInsert: true } };
+    assert.equal(indicatorView(source)?.notice?.title, 'Copied to clipboard');
+    source.config.dictationAutoInsert = false;
+    assert.equal(indicatorView(source)?.notice, undefined, 'Clipboard-only mode is a normal successful delivery');
+    source.config.dictationAutoInsert = true; source.current.delivery.kind = 'inserted';
+    assert.equal(indicatorView(source)?.notice, undefined);
+    assert.equal(indicatorView({ state: 'ready', message: 'Copied · Paste with Cmd+V' })?.notice, undefined, 'Explicit Copy does not need another notice');
 });

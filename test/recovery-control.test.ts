@@ -203,7 +203,7 @@ test('a popup display failure leaves the reminder retryable and reports a useful
     } finally { await fixture.close(); }
 });
 
-test('an expired reminder cannot hide recording controls that replaced its popup', async () => {
+test('an expired reminder cannot stop a recording after its prompt is dismissed', async () => {
     const fixture = await reminderFixture({ recorder: item => Object.assign(new EventEmitter(), {
         start: async () => {}, stop: async () => { item.state = 'stopped'; item.stoppedAt = new Date().toISOString(); await store.saveSession(item); },
     }) as unknown as Recorder });
@@ -211,9 +211,10 @@ test('an expired reminder cannot hide recording controls that replaced its popup
     try {
         await fixture.bridge.checkReminders(fixture.now);
         id = await fixture.bridge.startRecording();
-        assert.equal(fixture.titles.length, 2);
+        assert.equal(fixture.titles.length, 1, 'Recording state belongs in the capture bubble, not another popup');
+        const hiddenAtStart = fixture.hides(); assert.equal(hiddenAtStart, 1, 'Starting capture dismisses the previous reminder');
         await fixture.bridge.checkReminders(fixture.now + 4 * 60000);
-        assert.equal(fixture.hides(), 0);
+        assert.equal(fixture.hides(), hiddenAtStart);
         assert.equal(fixture.bridge.recording, true);
     } finally { await fixture.close(); if (id) await rm(store.sessionDirectory(id), { recursive: true }); }
 });

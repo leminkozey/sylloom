@@ -11,7 +11,7 @@ No Python runtime or cloud API.
 > it unmaintained at any time; ongoing support and updates aren't guaranteed.
 > Feel free to use it, change it or fork it.
 
-- **Dictate from any app.** Press Ctrl+Option+Space on Mac or Ctrl+Alt+Space on Windows, speak, then press it again. Text is inserted into a verified focused input, or copied for pasting.
+- **Dictate from any app.** Choose a single key with Push-to-Talk or Toggle-to-Talk. By default, press Ctrl+Option+Space on Mac or Ctrl+Alt+Space on Windows, speak, then press it again. Text is inserted into a verified focused input, or copied for pasting.
 - **Record meetings.** Capture microphone and system audio separately, with device switching, pause and mute controls.
 - **Choose what to keep.** Name each meeting and explicitly choose whether to keep a transcript, generate a note or delete the text.
 - **Read and export.** Render Markdown in the terminal, open a local browser view, and export Markdown or HTML.
@@ -145,24 +145,40 @@ Keep the CLI running, even when another app is in the foreground.
 
 A compact translucent waveform bubble appears at the bottom center of the display
 containing your mouse pointer while
-dictation is active. It opens from a droplet and contracts back down when finished,
+dictation is active. It follows the pointer to another display during capture and
+processing, staying at the bottom center without restarting the animation. It opens from a droplet and contracts back down when finished,
 matching the call popup animation. The waveform eases between samples and settles smoothly during silence.
 The same trace is used by the website demo. The waveform follows the actual microphone
-level, turns gray during processing and briefly green after delivery. The bubble
-contains no labels, buttons or timer, takes no keyboard focus and passes clicks
-through. Reduce Motion replaces the liquid transition with a short fade.
+level. Its same 13 contours morph into white gears during processing, then into a green check after delivery. The bubble shrinks from 122 to 74 to 52 points as the content becomes smaller. The bubble
+shows only the capture waveform and status during recording, takes no keyboard
+focus and passes clicks through. When useful information is needed, the same
+panel expands upward to a 300 × 84 point message, then returns to capture. There
+are no separate desktop notifications in a screen corner. Technical errors go
+to local `diagnostics/bubble.jsonl`; the bubble shows short guidance. Reduce Motion replaces the liquid transition with a short fade.
 Missing microphones fail before capture starts. Error feedback closes automatically
 after a brief indication, even while cleanup finishes; repeated error updates do
 not bring it back. Failed attempts remain in Library.
-Dictation notices use Sylloom's own translucent popup at the lower right of the
-pointer's display, keeping the waveform and call controls unobstructed. They never
-take keyboard focus. On Mac, Reduce Transparency keeps a more opaque background.
+Meeting recording uses the same compact bubble with a blue status dot and elapsed time. Hover and
+click the bubble to pause; the dot turns white. Click again to resume. It never
+activates the terminal or sends a keystroke to the call app. A confirmed hangup
+stops the linked recording, including while paused. Ringing or a Teams prejoin
+screen does not prove a connected call, and a detector outage never stops capture.
+Terminal recording controls remain available for manual stop.
+
+Routine recording, processing and success states stay in the bubble. Actionable
+errors and unexpected clipboard fallback expand that same bubble. Deliberate
+clipboard-only delivery shows the green check without an extra message.
+On Mac, Reduce Transparency keeps a more opaque background.
 
 ```sh
 ./sylloom dictate
 ./sylloom dictate --listen                # Global shortcuts without the terminal UI
 ./sylloom dictate --listen --format email
-./sylloom preview-indicator               # Simulated waveform; no microphone capture
+./sylloom preview-indicator               # Wave → gears → check; no microphone capture
+./sylloom preview-indicator --meeting     # Compact recording/pause preview with clock
+./sylloom preview-indicator --microphone-error # Red bars → microphone → slash; no audio
+./sylloom preview-indicator --notice      # Same bubble expands for a simulated message
+./sylloom preview-indicator --repeat 3    # Repeat a visual preview
 ```
 
 Choose **Message**, **Email** or **List** in Settings. Dictation keeps the language
@@ -211,12 +227,23 @@ the text or formatting is switched off for new dictations. Explicit snippets
 retain their exact saved text. Canceling a reformat preserves its previous saved version. Closing the CLI stops
 capture, retains interrupted audio and unregisters the shortcuts.
 
+### Your key, your recording mode
+
+Open **Settings → Global shortcuts** to choose **Dictation key** and **Recording mode**. The current key and interaction appear together above the settings table. Changes apply only with **Save changes**; Escape discards the draft. If a shortcut is occupied, the previous configuration is restored.
+
+- **Push-to-Talk:** hold the key while speaking, then release to transcribe and insert. Releasing during microphone startup also finishes the capture.
+- **Toggle-to-Talk:** press once to record and again to finish. Holding the key does not repeatedly toggle recording.
+- **macOS:** Fn/Globe, Right Option, a single function key, or a modifier combination. For Fn, set **System Settings → Keyboard → Press Globe key to → Do Nothing** to avoid opening the emoji picker. Right Option keeps its system modifier behavior, so reserve it for dictation. Function keys may require Fn depending on your keyboard settings.
+- **Windows:** Right Ctrl, a single function key, or a modifier combination. Right Ctrl keeps its system modifier behavior. F12 remains reserved for the Windows debugger.
+
+The existing shortcut stays selected until you change it. Cancel and Copy latest retain their existing shortcuts. Ordinary letters and Space cannot become unmodified global dictation keys. Modifier-only keys query only that selected key's state; other shortcuts use native registration. No unrelated keystrokes are logged. See [Apple's key state API](https://developer.apple.com/documentation/coregraphics/cgeventsource/keystate(_:key:)) and [Windows hotkey registration](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey).
+
 ### Personal words, corrections and snippets
 
-Open **Settings → Words and snippets**. Add preferred spellings for names or
-technical terms, explicit correction rules, or reusable spoken snippets. Every
-entry has a full preview. **Use in draft** stages it; **Save changes** applies the
-draft, and Esc discards it. Entries and the whole feature can be switched Off.
+Open **Dictionary** or **Snippets** directly from the home screen. Tab switches between Dictionary, Corrections and Snippets. Enter edits, Space enables/disables, Delete removes from the draft, and Ctrl+S saves. There is no test-phrase or extra preview step. Add preferred spellings for names or
+technical terms, explicit correction rules, or reusable spoken snippets.
+Edits remain in the draft until **Save changes** or Ctrl+S; Esc discards them.
+Each entry can be switched Off. Saving enables the saved rules for future dictation.
 Everything stays in `speech-rules.json` in your local data directory.
 
 Dictionary terms hint local recognition and preferred spelling; recognition can
@@ -273,6 +300,8 @@ If formatting fails after transcription, the original transcript is copied for
 recovery. If no speech was recognized, the clipboard stays unchanged; the audio
 remains available for retry. App support depends on its macOS Accessibility
 implementation. This does not promise insertion into every editor or terminal.
+
+The main menu contains recording, Dictionary, Snippets, Library, Insights and Settings. The selected entry explains itself on the right; narrower terminals show its help below. Dictionary teaches names and technical terms. Snippets insert saved text when you say an exact trigger. Dictation runs through your shortcut; saved results stay in Library. Model setup and storage/recovery live in Settings.
 
 ## Library and Insights
 
@@ -352,11 +381,11 @@ in the CLI. Details: [local bridge](DESIGN.md#local-outlook-reminders-and-call-b
 
 **Ctrl+Option+C** copies the latest saved dictation from any app. If that newest
 dictation has no text, it explicitly leaves the clipboard unchanged; it never
-silently substitutes an older message. Dictation's latest-result entry remains
+silently substitutes an older message. The Library's latest dictation remains
 available after restart, including failed and canceled recordings. Library has
 date/state filters under **Ctrl+F**, separate reformat/retranscribe actions and
 recognition/formatting/total timings. Failed retries preserve the previous result.
-**Storage and recovery** shows local usage and pending items; `sylloom recovery`
+**Settings → Storage and recovery** shows local usage and pending items; `sylloom recovery`
 prints the same overview. `sylloom bridge` probes the configured local sources.
 Recovery includes direct Finder access to the data folder and unreadable recording
 folders. Library shows indexing details with **Ctrl+E**, keeping healthy results searchable.
@@ -365,7 +394,7 @@ and preserves the original file while recovering its healthy tracks. The CLI can
 still open; naming and the transcript decision remain pending.
 Unreadable meeting metadata is listed with its preserved path. Dictation and
 settings remain available; new meetings and reprocessing wait for metadata repair
-so an unresolved transcript decision cannot be bypassed. **Storage and recovery →
+so an unresolved transcript decision cannot be bypassed. **Settings → Storage and recovery →
 Recover unreadable recording** shows every track and document before offering an
 explicit metadata restore. Usable canonical PCM audio is required. The original
 metadata is backed up before replacement; audio and existing notes/transcripts
@@ -526,7 +555,7 @@ created yourself. Reprocessing requires a new finish decision.
 
 ## Models and local data
 
-**Local models** groups setup by purpose: Dictation, Dictation formatting, Meeting
+**Settings → Models and performance → Manage local models** groups setup by purpose: Dictation, Dictation formatting, Meeting
 transcription and Meeting notes. Each row shows its status and selected model.
 Open a row to install or select the recommended model, choose a custom file, or
 configure the note backend. File paths stay in the custom-file dialog.
@@ -542,7 +571,7 @@ Install individually with `./sylloom models install whisper`, `dictation-whisper
 `llama` or `formatter`. `all` installs all four; `both` installs meeting models only.
 `--keep-selection` downloads without changing saved selections, as the installer does.
 Existing installations keep their selected formatter. Choose the fast model in
-**Local models → Dictation formatting → Use recommended model**, or run
+**Settings → Models and performance → Manage local models → Dictation formatting → Use recommended model**, or run
 `sylloom models install formatter`. The previous Qwen3.5 4B fine-tune remains an
 optional slower model in the same menu, or `sylloom models install formatter-quality`.
 Settings also accepts custom compatible model files. Meeting notes can use an

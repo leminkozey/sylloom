@@ -82,4 +82,31 @@ test('call ownership is captured before model shutdown instead of following anot
     } finally { release(); await starting?.catch(() => {}); await bridge.close(); await service.close(); }
 });
 
+test('the meeting bubble tracks pause and resume and only a joined call can stop it', async context => {
+    context.mock.method(Audio.prototype, 'devices', async () => inventory);
+    context.mock.method(Audio.prototype, 'request', async () => {});
+    const calls = new CallDetector(); calls.start = () => {};
+    const service = new DictationService(config), views: string[] = [], titles: string[] = [];
+    let hidden = 0, closed = 0;
+    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls,
+        popup: { show(title) { titles.push(title); }, hide() {}, close() {} },
+        hud: () => ({ render(view) { views.push(view.phase); }, hide() { hidden++; }, close() { closed++; } }) });
+    const api = (isInMeeting: boolean) => calls.apiMessage(JSON.stringify({ meetingUpdate: { meetingState: { isInMeeting } } }));
+    try {
+        await bridge.start(); calls.setState('ringing', 'accessibility', 'Synthetic ringing');
+        const id = await bridge.startRecording();
+        assert.equal(calls.canAutoStop(calls.snapshot.callId), false, 'Ringing is not a connected Teams call');
+        calls.observe({ trusted: true, teams: 'joining' }); api(false); await delay(1600);
+        assert.equal(bridge.recording, true); assert.equal(titles.includes('Recording saved'), false);
+        assert.equal(titles.includes('Recording meeting'), false, 'The bubble replaces the redundant recording popup');
+        await bridge.togglePause(); await delay(70);
+        assert.equal(bridge.currentSession?.state, 'paused'); assert.ok(views.includes('paused'));
+        await bridge.togglePause(); await delay(70); assert.equal(views.at(-1), 'recording');
+        api(true); await bridge.togglePause(); api(false); await delay(1800);
+        assert.equal(bridge.recording, false); assert.equal(hidden, 1);
+        await delay(350); assert.equal(closed, 1);
+        assert.equal((await loadSession(id)).decision, null);
+    } finally { await bridge.close(); await service.close(); }
+});
+
 after(async () => { await rm(root, { recursive: true, force: true }); });

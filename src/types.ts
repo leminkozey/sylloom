@@ -42,6 +42,8 @@ export type Settings = {
     dictationWarmSeconds: number;
     dictationPolish: 'auto' | 'always' | 'off';
     dictationAutoInsert: boolean;
+    dictationShortcut: string;
+    dictationTalkMode: 'toggle' | 'hold';
     globalShortcuts: boolean;
     copyLatestShortcut: boolean;
     dictationIndicator: boolean;

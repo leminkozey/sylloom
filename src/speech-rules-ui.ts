@@ -1,4 +1,4 @@
-import { addCorrection, addSnippet, addWord, applyTextRules, loadSpeechRules, matchSnippet, removeSpeechRule, saveSpeechRules, toggleSpeechRule, validateSpeechRules } from './speech-rules.js';
+import { addCorrection, addSnippet, addWord, loadSpeechRules, removeSpeechRule, saveSpeechRules, toggleSpeechRule, validateSpeechRules } from './speech-rules.js';
 import type { SpeechRules, Word, Correction, Snippet } from './speech-rules.js';
 import type { Screen } from './terminal/screen.js';
 import { errorMessage } from './types.js';
@@ -25,7 +25,7 @@ async function editEntry(screen: Screen, rules: SpeechRules, kind: Kind, existin
         addSnippet(next, trigger, 'Trigger validation');
         let text = existing && 'text' in existing ? existing.text : '';
         while (!screen.quitRequested) {
-            const value = await screen.input('Snippet text', 'Ctrl+S continues to preview. Paragraphs and special characters are inserted exactly; no formatter is used.', text, { multiline: true });
+            const value = await screen.input('Snippet text', 'Ctrl+S saves to your draft. Paragraphs and special characters are inserted exactly; no formatter is used.', text, { multiline: true });
             if (value === null) return rules;
             text = value;
             try { next = addSnippet(next, trigger, text); break; }
@@ -34,59 +34,45 @@ async function editEntry(screen: Screen, rules: SpeechRules, kind: Kind, existin
     }
     if (screen.quitRequested) return rules;
     const entry = next[kind].at(-1)!;
-    if (existing) { entry.id = existing.id; entry.enabled = existing.enabled; }
-    const before = 'from' in entry ? entry.from : 'trigger' in entry ? entry.trigger : entry.text.toLocaleLowerCase();
-    const after = 'from' in entry ? entry.to : entry.text;
-    await screen.view('Preview · ' + titles[kind], () => 'SAY / BEFORE\n\n' + before + '\n\nAFTER\n\n' + after, { markdown: false });
-    if (screen.quitRequested) return rules;
-    const action = await screen.select('Preview · ' + titles[kind], [{ value: 'use', name: 'Use in draft', hint: 'Save changes on Words and snippets to apply. Existing recordings remain unchanged.' }, back],
-        { back: true, detail: kind === 'snippets' ? 'Only this complete spoken phrase expands. No expansion inside a normal sentence.' : 'Future dictation only. Original recognized text always stays preserved.', before: () => ['Say / Before: ' + before, 'Preview reviewed. Existing recordings stay unchanged.', ''] });
-    return action === 'use' ? validateSpeechRules(next) : rules;
+    if (existing) {
+        entry.id = existing.id; entry.enabled = existing.enabled;
+        const list = next[kind] as (Word | Correction | Snippet)[], index = rules[kind].findIndex(item => item.id === existing.id);
+        list.splice(list.length - 1, 1); list.splice(index, 0, entry);
+    }
+    return validateSpeechRules(next);
 }
 
-export async function speechRulesMenu(screen: Screen): Promise<void> {
-    let draft = structuredClone(await loadSpeechRules());
-    for (;;) {
-        if (screen.quitRequested) return;
-        const action = await screen.select('Words and snippets', [
-            { value: 'enabled', name: 'Use personal words and snippets', toggle: draft.enabled },
-            ...(['words', 'corrections', 'snippets'] as const).map(kind => ({ value: kind, name: titles[kind] + ' · ' + draft[kind].length })),
-            { value: 'preview', name: 'Test a phrase…', hint: 'Preview deterministic corrections and snippet matching. No audio or model is started.' },
-            { value: 'save', name: 'Save changes' }, { value: 'back', name: 'Back · discard draft' },
-        ], { back: true, detail: 'Save applies to future dictation and explicit history retries. Esc discards this draft. Meeting transcripts are unchanged.' });
+export async function speechRulesMenu(screen: Screen, initial: Kind = 'words'): Promise<void> {
+    let draft = structuredClone(await loadSpeechRules()), kind = initial;
+    let selected = '';
+    const kinds: Kind[] = ['words', 'corrections', 'snippets'];
+    while (!screen.quitRequested) {
+        const action = await screen.select(titles[kind], () => [
+            ...draft[kind].map(entry => ({ value: entry.id, name: label(entry), toggle: entry.enabled,
+                cells: 'from' in entry ? [entry.from, entry.to, entry.enabled ? 'On' : 'Off'] : 'trigger' in entry ? [entry.trigger, entry.text, entry.enabled ? 'On' : 'Off'] : [entry.text, entry.enabled ? 'On' : 'Off'],
+                hint: 'from' in entry ? entry.from + ' → ' + entry.to : entry.text,
+                group: kind })),
+            { value: 'add', name: 'Add ' + (kind === 'words' ? 'word' : kind === 'corrections' ? 'correction' : 'snippet'), action: true },
+            { value: 'save', name: 'Save changes', action: true }, { value: 'back', name: 'Discard changes', action: true },
+        ], { back: true, initialValue: selected,
+            columns: kind === 'words' ? [{ title: 'Spelling' }, { title: 'Status', width: 8 }] : [{ title: kind === 'corrections' ? 'When you say' : 'Trigger' }, { title: kind === 'corrections' ? 'Replace with' : 'Text' }, { title: 'Status', width: 8 }],
+            detail: kind === 'words' ? 'Names and terms to recognize correctly. Tab: Corrections or Snippets.' : kind === 'corrections' ? 'Replace a misheard phrase automatically. Tab switches category.' : 'Say the exact trigger to insert its saved text. Tab switches category.',
+            footer: 'Tab Category · A Add · Enter Edit · Space On/Off · Del Remove · Ctrl+S Save',
+            shortcuts: { a: 'add', tab: 'next-kind', 'ctrl+s': 'save' },
+            onToggle: id => { draft = toggleSpeechRule(draft, id); },
+            onDelete: id => { draft = removeSpeechRule(draft, id); },
+        });
         if (['back', 'quit', 'settings'].includes(action)) return;
+        selected = action;
         try {
-            if (action === 'enabled') draft.enabled = !draft.enabled;
+            if (action === 'next-kind') { kind = kinds[(kinds.indexOf(kind) + 1) % kinds.length]!; selected = ''; continue; }
+            if (kinds.includes(action as Kind)) { kind = action as Kind; selected = ''; continue; }
             if (action === 'save') {
-                if (screen.dictation?.busy) throw new Error('Finish or cancel dictation before saving words and snippets. Your draft is retained.');
-                await saveSpeechRules(draft); return;
-            }
-            if (action === 'preview') {
-                const text = await screen.input('Test a phrase', 'Recognition/formatting are not run. Preview only your current draft rules.', '', { multiline: true });
-                if (text !== null) { const snippet = matchSnippet(text, draft); await screen.view('Rules preview · ' + (snippet ? 'Exact snippet match' : 'Corrections'), () => 'BEFORE\n\n' + text + '\n\nAFTER\n\n' + (snippet?.text ?? applyTextRules(text, draft)), { markdown: false }); }
-            }
-            if (action === 'words' || action === 'corrections' || action === 'snippets') {
-                const kind = action;
-                for (;;) {
-                    const selected = await screen.select(titles[kind], [{ value: 'add', name: 'Add ' + (kind === 'words' ? 'word' : kind === 'corrections' ? 'correction' : 'snippet') },
-                        ...draft[kind].map(entry => ({ value: entry.id, name: label(entry), toggle: entry.enabled })), back],
-                        { back: true, detail: 'Entries are still a draft. Open one to edit, disable or remove it.' });
-                    if (['back', 'quit', 'settings'].includes(selected)) break;
-                    try {
-                        if (selected === 'add') draft = await editEntry(screen, draft, kind);
-                        else {
-                            const entry = draft[kind].find(entry => entry.id === selected); if (!entry) continue;
-                            const operation = await screen.select(label(entry), [{ value: 'edit', name: 'Edit…' }, { value: 'toggle', name: 'Enabled', toggle: entry.enabled },
-                                { value: 'remove', name: 'Remove from draft' }, back], { back: true, detail: 'Save on Words and snippets to apply changes.' });
-                            if (operation === 'toggle') draft = toggleSpeechRule(draft, selected);
-                            if (operation === 'remove') draft = removeSpeechRule(draft, selected);
-                            if (operation === 'edit') draft = await editEntry(screen, draft, kind, entry);
-                        }
-                    } catch (error) { await screen.notice(titles[kind], errorMessage(error)); }
-                    if (screen.quitRequested) return;
-                }
-            }
-        } catch (error) { await screen.notice('Words and snippets', errorMessage(error)); }
+                if (screen.dictation?.busy) throw new Error('Finish or cancel dictation before saving. Your draft is retained.');
+                await saveSpeechRules({ ...draft, enabled: true }); return;
+            } else if (action === 'add') draft = await editEntry(screen, draft, kind);
+            else { const entry = draft[kind].find(entry => entry.id === action); if (entry) draft = await editEntry(screen, draft, kind, entry); }
+        } catch (error) { await screen.notice(titles[kind], errorMessage(error)); }
     }
 }
 

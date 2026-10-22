@@ -43,20 +43,30 @@ tables, quotes and code. Reading starts at the document beginning. HTML exports
 are independent local files with system fonts, dark/light color schemes and print CSS.
 
 The dictation indicator is a translucent dark 122 × 38 point AppKit bubble driven from
-TypeScript through Koffi, with a 48-point transparent margin for its liquid outline
+TypeScript through Koffi, with a 144-point transparent margin for its expanding liquid outline
 and shadow. It displays only a 13-bar waveform, takes no focus and passes clicks
 through during every phase, including transitions. Microphone levels drive
-recording feedback. Gray indicates processing and green confirms delivery.
-Reduce Motion uses a short fade and disables the processing wave animation.
-New captures anchor to the pointer's current display, including quick consecutive
-dictations. Confirmed missing microphones fail before capture. Error feedback
-expires after 900 ms plus its exit transition, independently of slow cleanup;
+recording feedback. The same 13 filled contours, with 48 vertices each, become
+white gear sectors and then the green check stroke. The morph retains each
+contour's local shape and pose to avoid collapsed slivers during rotation. No
+extra rings or success icon are added. Bubble width follows 122 → 74 → 52 points.
+The native renderer paints at 60 Hz using the latest audio sample. Reduce Motion
+uses static shapes and a short entry/exit fade. The morph and interactive meeting
+variant were reviewed through repeated native previews before being enabled.
+Meeting capture keeps the same 122 × 38 point size, with a blue status dot, a pause-aware clock and a narrower waveform. The dot is white when paused. Hover exposes the
+pause/resume affordance; only the visible pill accepts clicks and never activates
+the terminal. Routine capture notifications are omitted.
+Dictation and meeting capture continuously follow the pointer's current display,
+including monitor changes during recording and processing. Only the panel origin
+changes; focus and the current waveform/morph/entry animation are preserved. Confirmed missing microphones fail before capture. Error feedback
+expires after 1800 ms plus its exit transition, independently of slow cleanup;
 later updates to the same error cannot restart it.
+Microphone failure first turns all 13 existing contours red, then flows them inward in their spatial order into a microphone, without a solid intermediate block or a fan of rotating bars. Matched contour perimeter positions prevent shards during shape interpolation. One existing body contour becomes the diagonal slash, extending from the center without a traveling dot. No label, extra contour or expanded error banner is used. Native intermediate frames are inspected before the visual preview. Clipboard fallback and general failures use a shared native BubbleHost: the same panel expands upward to 300 × 84 points with a short title and helpful detail, then returns to the current recording. Text waits until the outline is wide enough to contain it. General failures have no special tiny error-code state. All direct notice calls use this same host; the right-corner notification implementation is removed. Technical messages are stored in bounded private diagnostics/bubble.jsonl, never inserted into the native notice. Call prompts retain their explicit Record/Dismiss actions, with error details sanitized.
 The indicator’s waveform is a functional recording display, separate from the
 static product mark. `sylloom preview-indicator` plays one simulated dictation
 without opening the microphone.
 
-See [NOTICE.md](NOTICE.md) for attribution and the unresolved project license.
+See [NOTICE.md](NOTICE.md) for attribution and the MIT license and third-party notices.
 
 ## Library and activity references
 
@@ -207,8 +217,8 @@ Confirmed ringing or active state offers Record / Dismiss. The native AppKit pop
 bottom-center on the pointer's display, with the actual logo and centered buttons.
 It takes no keyboard focus before a click. Dictation uses a compact waveform bubble.
 Both have a translucent fill and a thin edge; macOS Reduce Transparency restores
-an opaque background. Dictation notices reuse the same native surface at the
-lower right of the pointer's display, separate from the bottom-center controls.
+an opaque background. Dictation notices expand the same bottom-center capture
+panel upward, then return to the current capture state without a second window.
 Rapid messages replace the existing notice and cancel stale hide/close timers.
 
 The shared `src/native/liquid-bubble.ts` transition morphs a separate CAShapeLayer

@@ -1,4 +1,4 @@
-export type WavePhase = 'starting' | 'recording' | 'processing' | 'copied' | 'error';
+export type WavePhase = 'starting' | 'recording' | 'paused' | 'processing' | 'copied' | 'error';
 
 // Audio is sampled at 20 Hz; geometry can be rendered at any refresh rate.
 // Keep history and displayed heights separate so silence travels through the

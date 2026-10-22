@@ -1,7 +1,7 @@
 import koffi from 'koffi';
 
 type BubblePhase = 'hidden' | 'showing' | 'visible' | 'hiding';
-export type LiquidBubble = { readonly phase: BubblePhase; show(): void; hide(): void; close(): void };
+export type LiquidBubble = { readonly phase: BubblePhase; show(): void; hide(): void; resize(width: number, height?: number): void; close(): void };
 
 // Own only the outline and transitions; callers retain their native views,
 // event loop, focus policy and window lifetime.
@@ -33,11 +33,12 @@ export function createLiquidBubble(options: { layer: unknown; contentLayer: unkn
     let closed = false;
     let visibility: BubblePhase = 'hidden';
     let transition: NodeJS.Timeout | undefined;
+    let currentWidth = width, currentHeight = height;
     const blob = get(cls('CAShapeLayer'), sel('layer'));
     setFrame(blob, sel('setFrame:'), box(0, 0, width, height));
     const workspace = get(cls('NSWorkspace'), sel('sharedWorkspace'));
     const reducedTransparency = flag(workspace, sel('accessibilityDisplayShouldReduceTransparency'));
-    object(blob, sel('setFillColor:'), get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 0.075, 0.078, 0.09, reducedTransparency ? 0.98 : 0.76), sel('CGColor')));
+    object(blob, sel('setFillColor:'), get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 0.075, 0.078, 0.09, reducedTransparency ? 0.98 : 0.64), sel('CGColor')));
     const edge = get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 1, 1, 1, 0.14), sel('CGColor'));
     const highlight = get(color(cls('NSColor'), sel('colorWithSRGBRed:green:blue:alpha:'), 1, 1, 1, 0.5), sel('CGColor'));
     // Animation values below retain these colors beyond this autorelease pool.
@@ -112,6 +113,10 @@ export function createLiquidBubble(options: { layer: unknown; contentLayer: unkn
     };
     const clearAnimation = () => { for (const target of [layer, blob, contentLayer]) send(target, sel('removeAllAnimations')); };
     const move = (appearing: boolean) => {
+        for (const [key, value] of Object.entries({ spread: rounded(currentWidth * 230 / 330, currentHeight * 112 / 104, currentHeight * 56 / 104, currentHeight * 54 / 104),
+            overshoot: rounded(currentWidth * 352 / 330, currentHeight * 100 / 104, Math.min(radius * 1.5, currentHeight * 50 / 104)), squash: rounded(currentWidth * 322 / 330, currentHeight * 110 / 104, Math.min(radius * 1.2, currentHeight * 55 / 104)) })) {
+            const name = key as 'spread' | 'overshoot' | 'squash'; releasePath(shapes[name]); shapes[name] = value;
+        }
         const hidden = visibility === 'hidden';
         const surface = get(layer, sel('presentationLayer')) || layer;
         const silhouette = get(blob, sel('presentationLayer')) || blob;
@@ -156,6 +161,13 @@ export function createLiquidBubble(options: { layer: unknown; contentLayer: unkn
     send(setupPool, sel('drain'));
     return {
         get phase() { return visibility; },
+        resize(value, requestedHeight = height) {
+            if (closed || Math.abs(value - currentWidth) < .01 && Math.abs(requestedHeight - currentHeight) < .01) return;
+            currentWidth = Math.max(height, Math.min(330, value)); currentHeight = Math.max(height, Math.min(104, requestedHeight));
+            const next = rounded(currentWidth, currentHeight, Math.min(radius, currentWidth / 2), currentHeight / 2);
+            releasePath(shapes.full); shapes.full = next;
+            if (visibility === 'visible' || visibility === 'hidden') object(blob, sel('setPath:'), next);
+        },
         show() {
             if (closed || visibility === 'visible' || visibility === 'showing') return;
             const pool = get(cls('NSAutoreleasePool'), sel('new'));

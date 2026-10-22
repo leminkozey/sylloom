@@ -15,9 +15,8 @@ import { documentPath, exportDocument, openDocument } from './documents.js';
 import type { DocumentKind, ExportFormat } from './documents.js';
 import { renderMarkdown } from './terminal/markdown.js';
 import { mainMenu, finishFlow, recordFlow, settingsMenu } from './app.js';
-import { createInterface, dictationMenu } from './dictation-ui.js';
+import { createInterface } from './dictation-ui.js';
 import { DictationService, recoverDictations } from './dictation.js';
-import { DICTATION_SHORTCUT } from './hotkey.js';
 import { dictationConfig } from './dictation-models.js';
 import { installModel, models } from './models.js';
 import { errorMessage } from './types.js';
@@ -34,7 +33,7 @@ import { readLocalCalendar, calendarRange } from './calendar.js';
 import { storageOverview } from './storage.js';
 import { CallDetector, enabledCallApps } from './calls.js';
 import { previewPopups } from './popup-preview.js';
-import { previewIndicator } from './indicator-preview.js';
+import { previewIndicator, previewBubbleNotice } from './indicator-preview.js';
 import { addCorrection, addSnippet, addWord, applyTextRules, loadSpeechRules, matchSnippet, removeSpeechRule, saveSpeechRules, toggleSpeechRule } from './speech-rules.js';
 
 async function locked(work: () => Promise<void>): Promise<void> {
@@ -114,8 +113,7 @@ program.command('dictate').description("Dictate from any app, format locally and
         const config = await settings();
         if (options.format) config.dictationFormat = options.format;
         if (!options.listen) {
-            const ui = createInterface(config);
-            try { await dictationMenu(ui.screen, ui.service); } finally { await ui.close(); }
+            await mainMenu(config);
             return;
         }
         let bridge: MeetingBridge;
@@ -130,7 +128,7 @@ program.command('dictate').description("Dictate from any app, format locally and
             if (service.hotkeyError) throw new Error(service.hotkeyError);
             await bridge.start();
             service.on('update', () => process.stderr.write(service.message + '\n'));
-            process.stderr.write("Global shortcuts ready: " + DICTATION_SHORTCUT + " Start/stop · Ctrl+" + ALT_KEY + "+Esc Cancel · Ctrl+C Quit\n");
+            process.stderr.write("Global shortcuts ready: " + service.shortcut + " · " + service.talkHint + " · Ctrl+" + ALT_KEY + "+Esc Cancel · Ctrl+C Quit\n");
             timer = setInterval(() => {}, 1000);
             await stopped;
         } finally {
@@ -191,9 +189,11 @@ program.command('preview-popups').description('Preview native popup animations w
     });
 
 program.command('preview-indicator').description('Preview the dictation bubble with simulated microphone levels')
-    .action(async () => {
+    .option('--repeat <count>', 'Repeat the animation preview', '1').option('--meeting', 'Preview interactive meeting pause/resume').option('--microphone-error', 'Preview the microphone error morph').option('--clipboard', 'Preview clipboard fallback feedback').option('--notice', 'Preview the shared bubble expanding for a message')
+    .action(async options => {
         process.stdout.write('Dictation bubble preview with simulated levels. No microphone or audio capture. Ctrl+C closes the preview.\n');
-        await previewIndicator();
+        if (options.notice) { await previewBubbleNotice(); return; }
+        await previewIndicator({ repeat: Math.max(1, Math.min(10, Number(options.repeat) || 1)), meeting: options.meeting, microphoneError: options.microphoneError, clipboard: options.clipboard });
     });
 
 program.command('bridge').description('Probe local call and Outlook connections without recording')
@@ -374,7 +374,7 @@ program.command('doctor').description("Check audio backends, devices and local m
             noteBackend: config.llm, llmBinary: binaryAvailable(config.llmBinary), llmModel: existsSync(config.llmModel),
             dictationModel: existsSync(config.dictationModel), selectedFormatter: path.basename(config.dictationModel), dictationFormat: config.dictationFormat,
             dictationWhisperModel: path.basename(dictationConfig(config).whisperModel), dictationPolish: config.dictationPolish, dictationWarmSeconds: config.dictationWarmSeconds,
-            dictationShortcut: isDesktop ? DICTATION_SHORTCUT : 'Unsupported platform',
+            dictationShortcut: isDesktop ? config.dictationShortcut : 'Unsupported platform', dictationTalkMode: config.dictationTalkMode,
             dictationAutoInsert: config.dictationAutoInsert, accessibility: accessibilityStatus(),
         };
         try { report.devices = await audio.devices(); } catch (error) { report.devicesError = errorMessage(error); }

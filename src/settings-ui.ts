@@ -1,3 +1,4 @@
+import { parseShortcut, SINGLE_KEYS, DEFAULT_SHORTCUT } from './shortcut.js';
 import { isWindows, ALT_KEY, CALL_APPLE_LABEL } from './platform.js';
 import { saveSettings } from './store.js';
 import { modelMenu } from './model-ui.js';
@@ -8,7 +9,6 @@ import { formatLabels } from './formatter.js';
 import type { Screen, Choice } from './terminal/screen.js';
 import type { Settings, Source } from './types.js';
 import { errorMessage } from './types.js';
-import { speechRulesMenu } from './speech-rules-ui.js';
 import switchList from './terminal/switch-list.js';
 import type { SwitchRow } from './terminal/switch-list.js';
 
@@ -17,11 +17,11 @@ type Switch = { key: BooleanKey; name: string; hint: string };
 const groups = {
     dictation: { title: 'Dictation', switches: [
         { key: 'dictationAutoInsert', name: 'Insert into focused input', hint: 'Recheck focus before inserting. Copy to clipboard if insertion fails.' },
-        { key: 'dictationIndicator', name: 'Floating waveform', hint: 'Show a translucent waveform on the display containing the mouse pointer.' },
-        { key: 'dictationNotifications', name: 'Dictation notifications', hint: 'Show native notices on the mouse pointer’s display for results and errors.' },
+        { key: 'dictationIndicator', name: 'Capture bubble', hint: 'Show dictation and meeting recording on the display containing the mouse pointer.' },
+        { key: 'dictationNotifications', name: 'Bubble messages', hint: 'Helpful messages expand the capture bubble. There are no separate desktop notifications.' },
     ] },
     shortcuts: { title: 'Global shortcuts', switches: [
-        { key: 'globalShortcuts', name: 'Global shortcuts', hint: 'Ctrl+' + ALT_KEY + '+Space starts/stops dictation. Ctrl+' + ALT_KEY + '+Esc cancels.' },
+        { key: 'globalShortcuts', name: 'Global shortcuts', hint: 'Your chosen key works in every app. Ctrl+' + ALT_KEY + '+Esc cancels.' },
         { key: 'copyLatestShortcut', name: 'Copy latest dictation', hint: 'Ctrl+' + ALT_KEY + '+C copies the latest saved text. Requires global shortcuts On.' },
     ] },
     recording: { title: 'Recording', switches: [
@@ -40,8 +40,7 @@ export async function manageSettings(screen: Screen, config: Settings, devices: 
     while (!screen.quitRequested) {
         selected = await screen.select('Settings', [
             { value: 'dictation', name: 'Dictation', state: formatLabels[config.dictationFormat], hint: 'Insertion, waveform, notifications, formatting and default format.' },
-            { value: 'words', name: 'Words and snippets', hint: 'Personal spellings, explicit corrections and whole-dictation text snippets. Kept locally.' },
-            { value: 'shortcuts', name: 'Global shortcuts', state: config.globalShortcuts ? 'On' : 'Off', hint: 'Dictate from any app and copy the latest result.' },
+            { value: 'shortcuts', name: 'Global shortcuts', state: config.globalShortcuts ? config.dictationShortcut : 'Off', hint: 'Choose your dictation key and Push-to-Talk or Toggle-to-Talk.' },
             { value: 'recording', name: 'Recording and audio', state: config.input === 'default' ? 'System default' : 'Custom input', hint: 'Microphone, system audio and automatic stop after calls.' },
             { value: 'calendar', name: 'Outlook meeting reminders', state: config.meetingReminders ? config.reminderMinutes + ' min before' : 'Off', hint: 'Teams reminders, lead time and local calendar connections.' },
             { value: 'bridge', name: 'Call recording prompts', state: config.bridgeEnabled ? 'On' : 'Off', hint: CALL_APPLE_LABEL + ', WhatsApp and Teams. App switches and the local Teams API credential.' },
@@ -53,7 +52,6 @@ export async function manageSettings(screen: Screen, config: Settings, devices: 
         try {
             if (Object.hasOwn(groups, selected)) await editGroup(screen, config, selected as Group, devices);
             if (selected === 'bridge') await bridgeMenu(screen, config);
-            if (selected === 'words') await speechRulesMenu(screen);
             if (selected === 'models') await performanceSettings(screen, config);
             if (selected === 'storage') await recoveryMenu(screen, config);
             if (selected === 'permissions') {
@@ -72,6 +70,7 @@ async function editGroup(screen: Screen, config: Settings, group: Group, devices
     const section = groups[group], draft = { ...config }; let selected = section.switches[0]!.key as string;
     const keys = section.switches.map(row => row.key) as (keyof Settings)[];
     if (group === 'dictation') keys.push('dictationFormat', 'dictationPolish');
+    if (group === 'shortcuts') keys.push('dictationShortcut', 'dictationTalkMode');
     if (group === 'calendar') keys.push('reminderMinutes');
     if (group === 'recording') keys.push('input', 'output');
     while (!screen.quitRequested) {
@@ -83,11 +82,14 @@ async function editGroup(screen: Screen, config: Settings, group: Group, devices
             extra.push({ value: 'polish', name: 'Formatting mode', state: draft.dictationPolish === 'always' ? 'Always' : 'Automatic', requires: 'formatting', hint: 'Choose when the local formatter model is used.' },
                 { value: 'format', name: 'Default format', state: formatLabels[draft.dictationFormat], hint: 'Choose Message, Email or List.' });
         }
+        if (group === 'shortcuts') extra.push(
+            { value: 'talk-mode', name: 'Recording mode', state: draft.dictationTalkMode === 'hold' ? 'Push-to-Talk' : 'Toggle-to-Talk', hint: 'Hold and release, or press once to start and again to finish.' },
+            { value: 'talk-key', name: 'Dictation key', state: draft.dictationShortcut, hint: 'Choose a single function key or your own combination. Changes apply on Save.' });
         if (group === 'recording') extra.push({ value: 'mic', name: 'Microphone', state: draft.input === 'default' ? 'System default' : 'Custom', hint: draft.input },
             { value: 'system', name: 'System audio', state: draft.output === 'default' ? 'System default' : 'Custom', hint: draft.output });
         if (group === 'calendar') extra.push({ value: 'minutes', name: 'Remind before meeting', state: draft.reminderMinutes + ' min', hint: 'Choose a preset or custom lead time from 1 to 60 minutes.' },
             { value: 'sources', name: 'Local calendar connections…', state: 'Manage', hint: 'Explicit connection actions apply immediately. Reminder edits stay in this draft.' });
-        const result = await switchList(screen, 'Settings / ' + section.title, { rows, extra, initialValue: selected });
+        const result = await switchList(screen, 'Settings / ' + section.title, { rows, extra, initialValue: selected, ...(group === 'shortcuts' ? { detail: '[ ' + draft.dictationShortcut + ' ]  ' + (draft.dictationTalkMode === 'hold' ? 'Hold → Speak → Release' : 'Press → Speak → Press') + '. Save applies; Esc discards.' } : {}) });
         if (!result) return;
         for (const row of result.rows) {
             const entry = section.switches.find(entry => entry.key === row.value);
@@ -96,6 +98,30 @@ async function editGroup(screen: Screen, config: Settings, group: Group, devices
         }
         selected = result.action;
         try {
+        if (selected === 'talk-mode') {
+            const mode = await pickValue(screen, 'Recording mode', [
+                { value: 'hold', name: 'Push-to-Talk', hint: 'Hold your key while speaking. Release to transcribe and insert.' },
+                { value: 'toggle', name: 'Toggle-to-Talk', hint: 'Press your key once to record. Press it again to finish.' },
+            ], draft.dictationTalkMode);
+            if (mode === 'hold' || mode === 'toggle') draft.dictationTalkMode = mode;
+        }
+        if (selected === 'talk-key') {
+            const key = await pickValue(screen, 'Dictation key', [
+                { value: DEFAULT_SHORTCUT, name: DEFAULT_SHORTCUT + ' · Original shortcut' },
+                ...(isWindows ? [{ value: 'Right Ctrl', name: 'Right Ctrl · Single key', hint: 'The key still acts as Ctrl in other apps. Reserve it for dictation.' }] : [
+                    { value: 'Fn', name: 'Fn / Globe · Single key', hint: 'Set macOS Keyboard → Press Globe key to → Do Nothing to avoid the system emoji picker.' },
+                    { value: 'Right Option', name: 'Right Option · Single key', hint: 'The key still acts as Option in other apps. Reserve it for dictation, not Option combinations.' },
+                ]),
+                ...SINGLE_KEYS.map(value => ({ value, name: value + ' · Single key', hint: isWindows ? 'Reserved for dictation while Sylloom runs.' : 'Reserved for dictation. Depending on macOS keyboard settings, hold Fn to send function keys.' })),
+                { value: 'custom', name: 'Custom combination…', hint: 'For example Shift+F8 or Ctrl+Space. Ordinary typing keys remain protected.' },
+            ], draft.dictationShortcut);
+            const value = key === 'custom' ? await screen.input('Custom shortcut', 'Use modifiers + Space, Escape, C or a function key. For example Ctrl+Space or Shift+F8.', draft.dictationShortcut) : key;
+            if (value && !['back', 'quit', 'settings'].includes(value)) {
+                const binding = parseShortcut(value);
+                if ([parseShortcut('Ctrl+' + ALT_KEY + '+Escape').label, parseShortcut('Ctrl+' + ALT_KEY + '+C').label].includes(binding.label)) throw new Error('This shortcut is reserved for Cancel or Copy latest.');
+                draft.dictationShortcut = binding.label;
+            }
+        }
         if (selected === 'polish') {
             const mode = await pickValue(screen, 'Formatting mode', [{ value: 'auto', name: 'Automatic', hint: 'Clean speech and structure lists. Skip the model only for short, simple messages.' }, { value: 'always', name: 'Always', hint: 'Polish every dictation with the local model.' }], draft.dictationPolish);
             if (mode === 'auto' || mode === 'always') draft.dictationPolish = mode;
@@ -113,8 +139,14 @@ async function editGroup(screen: Screen, config: Settings, group: Group, devices
         if (selected === 'save') {
             if (screen.dictation?.busy) { await screen.notice('Dictation active', 'Finish or cancel dictation before applying settings.'); continue; }
             const changed = Object.fromEntries(keys.map(key => [key, draft[key]]));
+            const previous = { ...config };
             await saveSettings({ ...config, ...changed }); Object.assign(config, changed);
             if (group === 'dictation' || group === 'shortcuts') screen.dictation?.listen();
+            if ((group === 'dictation' || group === 'shortcuts') && screen.dictation?.hotkeyError) {
+                const error = screen.dictation.hotkeyError;
+                await saveSettings(previous); Object.assign(config, previous); screen.dictation.listen();
+                throw new Error(error + ' Previous shortcuts restored.');
+            }
             if (group === 'calendar') screen.bridge?.configureCalendar();
             return;
         }

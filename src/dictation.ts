@@ -1,3 +1,4 @@
+import { recordBubbleDiagnostic } from './notification.js';
 import { ALT_KEY, PASTE_SHORTCUT } from './platform.js';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +12,7 @@ import { formatDictation, needsDictationFormatting } from './formatter.js';
 import { DictationModels, dictationConfig } from './dictation-models.js';
 import { formatterSupportsLanguage } from './model-runtime.js';
 import { copyText, notify } from './clipboard.js';
-import { registerHotkeys, DICTATION_SHORTCUT } from './hotkey.js';
+import { registerHotkeys } from './hotkey.js';
 import { onShutdown } from './lifecycle.js';
 import { repairWav, sampleCount, RATE } from './wav.js';
 import { attachIndicator } from './indicator.js';
@@ -95,6 +96,10 @@ export class DictationService extends EventEmitter {
     private closingTask?: Promise<void>;
     private models = new DictationModels();
     hotkeyError = '';
+    private heldCapture = false;
+    private indicatorAvailable = false;
+    get shortcut(): string { return this.config.dictationShortcut; }
+    get talkHint(): string { return this.config.dictationTalkMode === 'hold' ? 'Hold to record · Release to finish' : 'Press to record · Press again to finish'; }
 
     constructor(readonly config: Settings, private blocked: () => boolean = () => false) {
         super();
@@ -103,19 +108,30 @@ export class DictationService extends EventEmitter {
     get busy(): boolean { return this.recovering || ['starting', 'recording', 'processing'].includes(this.state); }
     get status(): string {
         const elapsed = this.current ? timestamp((Date.now() - Date.parse(this.current.startedAt)) / 1000) : '';
-        if (this.state === 'recording') return "● DICTATION " + elapsed + ' · ' + DICTATION_SHORTCUT + ' Stop · Ctrl+' + ALT_KEY + '+Esc Cancel';
+        if (this.state === 'recording') return "● DICTATION " + elapsed + ' · ' + this.shortcut + (this.config.dictationTalkMode === 'hold' ? ' Release to stop' : ' Stop') + ' · Ctrl+' + ALT_KEY + '+Esc Cancel';
         if (this.busy) return this.message + ' · Ctrl+' + ALT_KEY + '+Esc Cancel';
-        return this.message + ' · ' + (!this.config.globalShortcuts ? 'Global shortcuts Off' : this.hotkeyError ? "Shortcut unavailable" : DICTATION_SHORTCUT);
+        return this.message + ' · ' + (!this.config.globalShortcuts ? 'Global shortcuts Off' : this.hotkeyError ? "Shortcut unavailable" : this.shortcut);
     }
     listen(): void {
-        this.closeHotkeys(); this.closeIndicator(); this.hotkeyError = '';
+        this.closeHotkeys(); this.closeIndicator(); this.hotkeyError = ''; this.heldCapture = false;
         this.closeHotkeys = () => {}; this.closeIndicator = () => {};
-        try { if (this.config.globalShortcuts) this.closeHotkeys = registerHotkeys(() => { void this.toggle().catch(error => this.reportError(error)); },
+        try { if (this.config.globalShortcuts) this.closeHotkeys = registerHotkeys(() => { void this.shortcutPress().catch(error => this.reportError(error)); },
             () => { void this.cancel().catch(error => this.reportError(error)); },
-            this.config.copyLatestShortcut ? () => { void this.copyLatest().catch(error => notify(errorMessage(error))); } : undefined); }
+            this.config.copyLatestShortcut ? () => { void this.copyLatest().catch(error => notify(errorMessage(error))); } : undefined, { shortcut: this.config.dictationShortcut, mode: this.config.dictationTalkMode, release: () => { void this.shortcutRelease().catch(error => this.reportError(error)); } }); }
         catch (error) { this.hotkeyError = errorMessage(error); this.update('error', this.hotkeyError, true); }
-        if (['darwin', 'win32'].includes(process.platform) && this.config.dictationIndicator) this.closeIndicator = attachIndicator(this, message => notify(message));
+        if (['darwin', 'win32'].includes(process.platform) && this.config.dictationIndicator) this.closeIndicator = attachIndicator(this, message => notify(message), undefined, available => { this.indicatorAvailable = available; });
         void this.prewarm();
+    }
+    async shortcutPress(): Promise<void> {
+        if (this.config.dictationTalkMode !== 'hold') { await this.toggle(); return; }
+        if (this.busy || this.closing || this.blocked()) return;
+        this.heldCapture = true;
+        await this.toggle();
+    }
+    async shortcutRelease(): Promise<void> {
+        if (!this.heldCapture) return;
+        this.heldCapture = false;
+        if (this.state === 'starting' || this.state === 'recording') await this.toggle();
     }
     async prewarm(): Promise<void> {
         if (this.closing || this.busy || this.blocked() || this.config.dictationWarmSeconds <= 0) return;
@@ -129,15 +145,16 @@ export class DictationService extends EventEmitter {
         if (!this.closing && !this.busy) this.models.release(this.config.dictationWarmSeconds);
     }
     private update(state: typeof this.state, message: string, notification = false): void {
+        if (state === 'error' && (this.state !== state || this.message !== message)) recordBubbleDiagnostic(message);
         this.state = state; this.message = message; this.emit('update');
-        if (notification && this.config.dictationNotifications) notify(message);
+        if (notification && this.config.dictationNotifications && !this.indicatorAvailable) notify(message);
     }
     private reportError(error: unknown): void { this.update('error', errorMessage(error), true); }
     async toggle(): Promise<void> {
         if (this.closing) return;
         if (this.recovering) { await this.operation; return; }
         if (this.state === 'starting') { this.stopRequested = true; return; }
-        if (this.state === 'processing') { notify("Dictation is still processing."); return; }
+        if (this.state === 'processing') return;
         if (this.state !== 'recording' && this.blocked()) { notify("Recording or processing is active. Dictation will be available afterwards."); return; }
         this.operation = (this.state === 'recording' ? this.stopAndProcess() : this.start()).catch(error => this.handleFailure(error));
         await this.operation;
@@ -161,12 +178,12 @@ export class DictationService extends EventEmitter {
         recorder.on('failure', error => { void this.cancelWithError(error).catch(cause => this.reportError(cause)); });
         await recorder.start();
         this.controller.signal.throwIfAborted();
-        this.update('recording', "Microphone recording. Press the shortcut again to stop.", true);
+        this.update('recording', 'Microphone recording. ' + (this.config.dictationTalkMode === 'hold' ? 'Release the shortcut to finish.' : 'Press the shortcut again to stop.'));
         if (this.stopRequested) await this.stopAndProcess();
     }
     private async stopAndProcess(): Promise<void> {
         this.input = this.config.dictationAutoInsert ? captureInput() : { reason: 'Automatic insertion is turned off.' };
-        this.update('processing', "Transcribing dictation…", true);
+        this.update('processing', "Transcribing dictation…");
         await this.recorder?.stop(); this.recorder = undefined;
         await this.process(this.current!, this.controller!.signal);
     }
@@ -234,7 +251,7 @@ export class DictationService extends EventEmitter {
     }
     private deliveryReady(item: Dictation): void {
         this.update('ready', item.delivery?.kind === 'inserted' ? 'Inserted · ' + item.text!.length + ' characters · Saved in Library' :
-            'Copied · Paste with ' + PASTE_SHORTCUT + ' · Saved in Library', true);
+            'Copied · Paste with ' + PASTE_SHORTCUT + ' · Saved in Library', item.delivery?.kind === 'clipboard' && this.config.dictationAutoInsert);
     }
     async retry(item: Dictation, format = item.format, retranscribe = false): Promise<void> {
         return this.reprocess(item, format, { retranscribe });
@@ -293,7 +310,7 @@ export class DictationService extends EventEmitter {
         if (this.busy) throw new Error("Stop or cancel dictation first.");
         await copyText((raw ? item.raw : item.text) || '');
         item.copiedAt = new Date().toISOString(); await save(item);
-        if (!this.busy && !this.closing) this.update('ready', 'Copied · Paste with ' + PASTE_SHORTCUT, true);
+        if (!this.busy && !this.closing) this.update('ready', 'Copied · Paste with ' + PASTE_SHORTCUT);
     }
     async edit(item: Dictation, text: string): Promise<void> {
         if (this.busy || this.blocked() || this.closing) throw new Error('Finish the active recording or processing task first.');
@@ -337,7 +354,7 @@ export class DictationService extends EventEmitter {
         if (this.closing || this.canceled) {
             await this.retain(this.closing ? 'interrupted' : 'canceled');
             if (this.closing) return;
-            this.update('idle', 'Canceled · Saved in Library · Clipboard preserved', true);
+            this.update('idle', 'Canceled · Saved in Library · Clipboard preserved');
             return;
         }
         const message = errorMessage(error);
@@ -383,7 +400,7 @@ export class DictationService extends EventEmitter {
     }
     async cancel(): Promise<void> {
         if (!this.busy) return;
-        if (this.committing) { notify('Delivering text…'); return; }
+        if (this.committing) return;
         const recording = this.state === 'recording';
         this.canceled = true; this.controller?.abort(new Error("Dictation canceled."));
         this.recovering = true;

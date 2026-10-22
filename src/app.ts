@@ -1,6 +1,6 @@
-import { DICTATION_SHORTCUT } from './hotkey.js';
 import { PASTE_SHORTCUT } from './platform.js';
 import { existsSync } from 'node:fs';
+import { modelMenu } from './model-ui.js';
 import { manageSettings } from './settings-ui.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -9,7 +9,6 @@ import { Recorder } from './recorder.js';
 import { startControl } from './control.js';
 import { Transcription, timestamp } from './transcription.js';
 import { createSession, home, nameSession, saveSettings, sessionDirectory, scanSessions } from './store.js';
-import { modelMenu } from './model-ui.js';
 import { finishSession, reopenSession } from './workflow.js';
 import { documentPath, exportDocument, exportName, openDocument } from './documents.js';
 import type { DocumentKind, ExportFormat } from './documents.js';
@@ -18,10 +17,11 @@ import type { Choice } from './terminal/screen.js';
 import style from './terminal/style.js';
 import type { Decision, Session, Settings, Source } from './types.js';
 import { errorMessage } from './types.js';
-import { createInterface, dictationMenu, dictationItemMenu } from './dictation-ui.js';
+import { createInterface, dictationItemMenu } from './dictation-ui.js';
 import type { Dictation } from './dictation.js';
 import { libraryMenu, editLibraryMetadata } from './library-ui.js';
 import { loadLibrary } from './library.js';
+import { speechRulesMenu } from './speech-rules-ui.js';
 import { insightsMenu } from './insights-ui.js';
 import { recordingControls, recoveryMenu } from './bridge-ui.js';
 import { copyText, notify } from './clipboard.js';
@@ -246,19 +246,19 @@ export async function mainMenu(config: Settings): Promise<void> {
             const selected = await screen.select("Capture meetings locally", () => choices([
                 [ui.bridge.recording ? 'recording-controls' : catalog.issues.length ? 'recovery' : 'record', ui.bridge.recording ? 'Recording controls' : catalog.issues.length ? 'Review unreadable recording' : "Start recording", catalog.issues.length ? 'Metadata needs attention. Dictation remains available.' : "Microphone and system audio, recorded separately."],
                 ...(!ui.bridge.recording && pending ? [['finish', 'Finish pending recording', all.filter(session => session.state === 'stopped').length + ' awaiting a name and transcript decision. Audio is preserved.'] as [string, string, string]] : []),
-                ['dictation', "Dictation", DICTATION_SHORTCUT + ' in any app. Format, insert or copy, and save locally.'],
+                ['words', 'Dictionary', 'Names and terms to recognize correctly.'],
+                ['snippets', 'Snippets', 'Say a phrase to insert saved text.'],
                 ['library', 'Library', 'Search notes, recordings and every dictation. Pin what matters.'],
                 ['insights', 'Insights', 'Daily activity, streaks, spoken words and WPM.'],
-                ['recovery', 'Storage and recovery', 'Saved audio, interrupted captures, models and available space.'],
-                ['settings', "Settings"], ['models', "Local models"], ['quit', "Quit"],
+                ['settings', 'Settings', 'Audio, shortcuts, models and storage.'], ['quit', 'Quit', 'Close Sylloom.'],
             ]), { initialValue: selectedMenu, detail: (existsSync(config.whisperModel) ? "Transcription model ready" : "Set up Whisper first") + " · Process after recording", shortcuts: { f8: 'dictation-toggle' }, complete: () => ui.bridge.revision !== revision ? 'refresh' : undefined });
             if (!['refresh', 'dictation-toggle'].includes(selected)) selectedMenu = selected;
             try {
                 if (selected === 'quit') return;
-                if (selected === 'dictation') await dictationMenu(screen);
                 if (selected === 'dictation-toggle') { void ui.service.toggle().catch(error => notify(errorMessage(error))); }
                 if (selected === 'settings') await settingsMenu(screen, config);
-                if (selected === 'models') await modelMenu(screen, config);
+                if (selected === 'words') await speechRulesMenu(screen, 'words');
+                if (selected === 'snippets') await speechRulesMenu(screen, 'snippets');
                 if (selected === 'insights') await insightsMenu(screen);
                 if (selected === 'recording-controls') await recordingControls(screen);
                 if (selected === 'recovery') await recoveryMenu(screen, config);

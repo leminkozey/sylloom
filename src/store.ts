@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { Chunk, Decision, Session, Settings } from './types.js';
 import { cleanText } from './types.js';
+import { DEFAULT_SHORTCUT, parseShortcut } from './shortcut.js';
 import { lockController } from './native/controller-lock.js';
 
 export const home = path.resolve(process.env.SYLLOOM_HOME || process.env.MEETING_HOME || fileURLToPath(new URL('../data/', import.meta.url)));
@@ -17,6 +18,7 @@ export const defaults: Settings = {
     dictationModel: path.join(modelDirectory, 'cleanup-1-q8_0.gguf'), dictationFormat: 'message',
     dictationWhisperModel: path.join(modelDirectory, 'ggml-large-v3-turbo.bin'), dictationWarmSeconds: 120,
     dictationPolish: 'auto', dictationAutoInsert: true,
+    dictationShortcut: DEFAULT_SHORTCUT, dictationTalkMode: 'toggle',
     globalShortcuts: true, copyLatestShortcut: true, dictationIndicator: true, dictationNotifications: true,
     calendarFile: '', bridgeEnabled: true, teamsPort: 8124,
     detectAppleCalls: true, detectWhatsAppCalls: true, detectTeamsCalls: true,
@@ -49,6 +51,8 @@ export async function settings(): Promise<Settings> {
     const saved = JSON.parse(await readFile(file, 'utf8'));
     const config = { ...defaults, ...saved, live: false };
     if (config.whisperModel === path.join(modelDirectory, 'ggml-small-q5_1.bin')) config.whisperModel = defaults.whisperModel;
+    config.dictationShortcut = parseShortcut(config.dictationShortcut).label;
+    if (!['toggle', 'hold'].includes(config.dictationTalkMode)) throw new Error('Invalid dictation mode. Choose toggle or hold in settings.json.');
     return config;
 }
 

@@ -89,11 +89,24 @@ process.send({ready:true});
         const fixture = await request({ type: 'prepare', text: 'Before selected after', start: 7, end: 15 });
         await delay(150);
         const foreground = api.foreground();
-        popup = createWindowsPopup(() => {}); hud = createWindowsHud();
+        let pauses = 0;
+        popup = createWindowsPopup(() => {}); hud = createWindowsHud({ onTogglePause: () => { pauses++; } });
         popup.show('Incoming call', 'Synthetic native smoke test', [{ id: 'record', label: 'Record' }, { id: 'dismiss', label: 'Dismiss' }]);
         hud.render({ phase: 'recording', level: .35 });
         await delay(250);
         assert.equal(api.foreground(), foreground, 'The popup and waveform must preserve focus');
+        for (const view of [
+            { phase: 'processing' as const, level: 0 },
+            { phase: 'copied' as const, level: 0 },
+            { phase: 'error' as const, level: 0, feedback: 'microphone' as const },
+            { phase: 'recording' as const, level: .04, mode: 'meeting' as const, elapsed: 42 },
+            { phase: 'paused' as const, level: 0, mode: 'meeting' as const, elapsed: 42 },
+            { phase: 'paused' as const, level: 0, mode: 'meeting' as const, elapsed: 42, notice: { title: 'Copied to clipboard', detail: 'Synthetic expanded bubble smoke test.' } },
+        ]) {
+            hud.render(view); await delay(100);
+            assert.equal(api.foreground(), foreground, 'Morphs, pause and expanded messages must preserve focus');
+        }
+        assert.equal(pauses, 0, 'Rendering cannot trigger a pause action');
         hud.hide(); popup.hide(); await delay(200);
         await t.test('focused text insertion and selection/focus guards', async context => {
             if (String(foreground) !== fixture.window) { context.skip('This runner has no interactive foreground desktop. Test real insertion on a Windows desktop.'); return; }
