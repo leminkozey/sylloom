@@ -107,9 +107,17 @@ class FakeRecorder extends EventEmitter {
     current = { mic: 'fixture', system: 'fixture' };
     muted = { mic: false, system: false };
     health = { mic: 'Ready', system: 'Ready' };
-    constructor(readonly session: Session) { super(); }
+    constructor(readonly session: Session, private stopDelay = 0) { super(); }
     async start() { await writeFile(path.join(sessionDirectory(this.session.id), 'mic.wav'), Buffer.from('RIFF fixture audio')); }
-    async stop() { if (this.stops) return; this.stops++; this.session.state = 'stopped'; this.session.stoppedAt = new Date().toISOString(); await saveSession(this.session); }
+    async stop() { if (this.stops) return; this.stops++; await delay(this.stopDelay); this.session.state = 'stopped'; this.session.stoppedAt = new Date().toISOString(); await saveSession(this.session); }
+}
+
+async function waitForStopped(bridge: InstanceType<typeof MeetingBridge>): Promise<void> {
+    // Auto-stop includes asynchronous metadata writes and named-pipe cleanup.
+    // A loaded Windows runner may need more than 150 ms after the debounce.
+    const deadline = Date.now() + 5000;
+    while (bridge.recording && Date.now() < deadline) await delay(10);
+    assert.equal(bridge.recording, false, 'Confirmed hangup must finish capture and cleanup within five seconds');
 }
 
 test('recording begun during Teams preview survives not joined and stops only after a real meeting ends', async () => {
@@ -129,7 +137,7 @@ test('recording begun during Teams preview survives not joined and stops only af
         assert.equal(recorder.stops, 0); assert.equal(bridge.finishRequested, false);
         api(true); assert.equal(calls.snapshot.callId, callId);
         api(false); api(false); calls.observe({ trusted: true, teams: 'unknown' });
-        await delay(1650);
+        await waitForStopped(bridge);
         assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
         const session = await loadSession(id);
         assert.equal(session.name, null); assert.equal(session.decision, null);
@@ -161,13 +169,15 @@ test('call-linked capture stops on confirmed hangup and preserves mandatory deci
     const calls = new CallDetector(); calls.start = () => {};
     const config = { ...defaults, calendarOutlook: false, calendarSystem: false, calendarAutoRefresh: false };
     const service = new DictationService(config); let recorder!: FakeRecorder;
-    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls, recorder: session => (recorder = new FakeRecorder(session)) as unknown as Recorder });
+    const bridge = new MeetingBridge(config, service, undefined, { native: false, detector: calls, recorder: session => (recorder = new FakeRecorder(session, 350)) as unknown as Recorder });
     try {
         await bridge.start(); calls.setState('active', 'local-api', 'Fixture call');
         const start = bridge.startRecording(); await assert.rejects(bridge.startRecording(), /active/); const id = await start;
         calls.setState('idle', 'local-api', 'Ended'); calls.setState('unknown', 'local-api', 'Disconnected');
         await delay(1600); assert.equal(bridge.recording, true, 'a detector outage must cancel automatic stop');
-        calls.setState('idle', 'local-api', 'Confirmed ended'); await delay(1650);
+        calls.setState('idle', 'local-api', 'Confirmed ended');
+        await delay(100); assert.equal(bridge.recording, true, 'Hangup debounce must not stop capture immediately');
+        await waitForStopped(bridge);
         assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
         const session = await loadSession(id); assert.equal(session.state, 'stopped'); assert.equal(session.name, null); assert.equal(session.decision, null);
         const nextId = await bridge.startRecording();
@@ -191,7 +201,7 @@ test('only the call that started capture may stop it, even when another app owns
         calls.setState('ringing', 'accessibility', 'WhatsApp incoming', 'whatsapp');
         calls.setState('idle', 'accessibility', 'Apple hangup', 'apple');
         assert.equal(calls.snapshot.app, 'whatsapp', 'another app still owns the displayed state');
-        await delay(1650); assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
+        await waitForStopped(bridge); assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
         const session = await loadSession(id);
         assert.equal(session.name, null); assert.equal(session.decision, null);
         session.name = 'Finished ownership fixture'; session.decision = 'delete'; session.state = 'done'; await saveSession(session);
@@ -213,7 +223,7 @@ test('a new call and its preview in the same app cannot erase the captured call 
         api(true);
         assert.notEqual(calls.snapshot.callId, owner); assert.equal(calls.snapshot.state, 'active');
         assert.equal(calls.stateFor(owner)?.state, 'idle');
-        await delay(1650);
+        await waitForStopped(bridge);
         assert.equal(bridge.recording, false); assert.equal(recorder.stops, 1);
         const session = await loadSession(id);
         assert.equal(session.name, null); assert.equal(session.decision, null);
